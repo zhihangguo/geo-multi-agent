@@ -1,0 +1,44 @@
+# Environment files
+.env
+.env.local
+.env.production
+*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+env/
+.venv/
+*.egg-info/
+
+# Logs
+*.log
+logs/
+app/logs/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node modules (for both frontends)
+front/agent_web_ui/node_modules/
+front/knowlege_platform_ui/node_modules/
+
+# Build outputs
+front/*/dist/
+front/*/.vite/
+
+# Backend tutorials (not part of main project)
+backend/openai-agents-tutorial/
+backend手敲/

@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+python-dotenv
+pymysql
+DBUtils
+openai
+httpx
+openai-agents
+pystun3
+langgraph
+langchain-openai
+langchain-core
