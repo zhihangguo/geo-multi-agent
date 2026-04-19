@@ -75,7 +75,7 @@ class SessionService:
             logger.error(f"用户 {user_id}  会话 {session_id} 文件读取失败 原因 {e}")
             return [{"role": "system", "content": "用户话的文件读取失败"}]
 
-    def save_history(self, user_id: str, session_id: str, chat_history: List[Dict[str, Any]]):
+    async def save_history(self, user_id: str, session_id: str, chat_history: List[Dict[str, Any]]):
         """
         保存历史会话
         调用的时机：调用完LLM（Agent）之后
@@ -95,7 +95,7 @@ class SessionService:
         target_session_id=session_id  if session_id else self.DEFAULT_SESSION_ID
 
         try:
-            self._repo.save_session(user_id, target_session_id, chat_history)
+            await self._repo.save_session(user_id, target_session_id, chat_history)
 
         except Exception as e:
             logger.error(f"保存用户 {user_id} 会话 {session_id} 文件失败:{str(e)}")

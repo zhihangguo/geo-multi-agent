@@ -42,3 +42,17 @@ front/*/.vite/
 # Backend tutorials (not part of main project)
 backend/openai-agents-tutorial/
 backend手敲/
+
+# Development notes (contain personal API keys)
+1.笔记/
+
+# Claude Code internal
+.claude/
+CLAUDE.md
+
+# User memory sessions (personal data)
+backend/app/user_memories/
+
+# Chroma vector DB data (regenerate locally)
+backend/knowledge/chroma_kb1/
+backend/knowledge/chroma_kb1_backup/

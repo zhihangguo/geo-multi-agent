@@ -8,6 +8,7 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import JSONResponse
 from services.ingestion.ingestion_processor import IngestionProcessor
 from schemas.schema import UploadResponse, QueryResponse, QueryRequest
 from services.retrieval_service import RetrievalService
@@ -22,6 +23,22 @@ router = APIRouter()
 ingestion_processor = IngestionProcessor()
 retrieval_service = RetrievalService()
 query_service = QueryService()
+
+
+# 获取知识库服务的模型配置
+@router.get("/api/model_config", summary="获取知识库模型配置")
+async def get_model_config():
+    """
+    返回知识库服务使用的模型配置
+    """
+    return JSONResponse({
+        "success": True,
+        "config": {
+            "model": settings.MODEL,
+            "embedding_model": settings.EMBEDDING_MODEL,
+            "base_url": settings.BASE_URL,
+        }
+    })
 
 
 # IO(对文件读写) 执行SQL 网络请求 典型耗时任务

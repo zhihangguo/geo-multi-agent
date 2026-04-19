@@ -16,6 +16,7 @@ from services.stream_response_service import process_stream_response
 from utils.response_util import ResponseFactory
 from infrastructure.logging.logger import logger
 from schemas.response import ContentKind
+from infrastructure.tools.mcp.mcp_manager import MCPSessionManager
 
 
 class MultiAgentService:
@@ -72,10 +73,18 @@ class MultiAgentService:
 
             # 3. 根据模式执行
             if mode == "langgraph":
+                # thread_id = user_id + session_id，用于 LangGraph Checkpointing 状态关联
+                # 同一会话的多次请求共享同一 thread_id，实现断点续传
+                target_session_id = session_id or session_service.DEFAULT_SESSION_ID
+                thread_id = f"{user_id}:{target_session_id}"
+
                 agent_result_parts = []
+                process_logs = []
                 async for chunk in run_langgraph_stream(
                     user_query=user_query,
                     messages=chat_history,
+                    thread_id=thread_id,
+                    checkpoint_ns=user_id,
                 ):
                     yield chunk
                     try:
@@ -83,16 +92,27 @@ class MultiAgentService:
                         if chunk.startswith("data: "):
                             data = json.loads(chunk[6:].strip())
                             content = data.get("content", {})
-                            if content.get("kind") == "ANSWER" and content.get("text"):
-                                agent_result_parts.append(content["text"])
+                            kind = content.get("kind")
+                            text = content.get("text", "")
+
+                            if kind == "ANSWER" and text:
+                                agent_result_parts.append(text)
+                            elif kind in ["THINKING", "PROCESS"] and text:
+                                process_logs.append(text)
                     except Exception:
                         pass
 
                 agent_result = "".join(agent_result_parts)
-                if agent_result:
-                    format_agent_result = re.sub(r'\n+', '\n', agent_result)
-                    chat_history.append({"role": "assistant", "content": format_agent_result})
-                    session_service.save_history(user_id, session_id, chat_history)
+                format_agent_result = re.sub(r'\n+', '\n', agent_result).strip() if agent_result else "（LangGraph 执行完成，但未产生回答）"
+
+                # 保存思考过程
+                if process_logs:
+                    process_content = "\n".join(process_logs)
+                    chat_history.append({"role": "process", "content": process_content})
+
+                # 始终保存会话历史，即使没有回答内容
+                chat_history.append({"role": "assistant", "content": format_agent_result})
+                await session_service.save_history(user_id, session_id, chat_history)
                 return
 
             # 默认：OpenAI Agents SDK（严格超时 + 最多3次）
@@ -101,60 +121,75 @@ class MultiAgentService:
             final_error = ""
             runtime_orchestrator = cls._build_runtime_orchestrator(runtime_model)
 
-            for attempt in range(1, max_retries + 1):
-                retry_tip = f"⏱️ Orchestrator 尝试 {attempt}/{max_retries}"
-                yield "data: " + ResponseFactory.build_text(
-                    retry_tip, ContentKind.PROCESS
-                ).model_dump_json() + "\n\n"
+            # 收集思考过程和工具调用过程
+            process_logs = []
 
-                try:
-                    streaming_result = Runner.run_streamed(
-                        starting_agent=runtime_orchestrator,
-                        input=chat_history,
-                        context=user_query,
-                        max_turns=5,
-                        run_config=RunConfig(tracing_disabled=True)
-                    )
-
-                    has_answer_chunk = False
-
-                    # 改为稳态流式读取：避免 wait_for 触发取消传播，导致工具调用任务被强制 cancel
-                    async for chunk in process_stream_response(streaming_result, emit_finish=False):
-                        try:
-                            import json
-                            if chunk.startswith("data: "):
-                                data = json.loads(chunk[6:].strip())
-                                content = data.get("content", {})
-                                if content.get("kind") == "ANSWER" and content.get("text"):
-                                    has_answer_chunk = True
-                        except Exception:
-                            pass
-
-                        yield chunk
-
-                    agent_result = streaming_result.final_output
-                    if agent_result is None:
-                        agent_result = ""
-                    elif not isinstance(agent_result, str):
-                        agent_result = str(agent_result)
-                    format_agent_result = re.sub(r'\n+', '\n', agent_result).strip()
-
-                    if has_answer_chunk or format_agent_result:
-                        final_answer = format_agent_result or "（已返回流式答案）"
-                        # 关键修复：当模型没有产出流式 ANSWER 分片时，补发一次最终答案，避免前端只看到过程无结果
-                        if not has_answer_chunk and format_agent_result:
-                            yield "data: " + ResponseFactory.build_text(
-                                format_agent_result, ContentKind.ANSWER
-                            ).model_dump_json() + "\n\n"
-                        break
-
-                    raise RuntimeError("模型未产出可用回答")
-                except Exception as e:
-                    final_error = str(e)
+            # MCP 连接统一在请求入口建立，与 LangGraph 侧 AsyncExitStack 做法对齐
+            async with MCPSessionManager():
+                for attempt in range(1, max_retries + 1):
+                    retry_tip = f"⏱️ Orchestrator 尝试 {attempt}/{max_retries}"
                     yield "data: " + ResponseFactory.build_text(
-                        f"⚠️ 本次执行异常：{final_error}", ContentKind.PROCESS
+                        retry_tip, ContentKind.PROCESS
                     ).model_dump_json() + "\n\n"
-                    logger.warning(f"第{attempt}次处理失败: {final_error}")
+                    process_logs.append(retry_tip)
+
+                    try:
+                        streaming_result = Runner.run_streamed(
+                            starting_agent=runtime_orchestrator,
+                            input=chat_history,
+                            context=user_query,
+                            max_turns=5,
+                            run_config=RunConfig(tracing_disabled=True)
+                        )
+
+                        has_answer_chunk = False
+
+                        # 改为稳态流式读取：避免 wait_for 触发取消传播，导致工具调用任务被强制 cancel
+                        async for chunk in process_stream_response(streaming_result, emit_finish=False):
+                            try:
+                                import json
+                                if chunk.startswith("data: "):
+                                    data = json.loads(chunk[6:].strip())
+                                    content = data.get("content", {})
+                                    kind = content.get("kind")
+                                    text = content.get("text", "")
+
+                                    # 收集 THINKING 和 PROCESS 类型的消息
+                                    if kind in ["THINKING", "PROCESS"] and text:
+                                        process_logs.append(text)
+
+                                    if kind == "ANSWER" and text:
+                                        has_answer_chunk = True
+                            except Exception:
+                                pass
+
+                            yield chunk
+
+                        agent_result = streaming_result.final_output
+                        if agent_result is None:
+                            agent_result = ""
+                        elif not isinstance(agent_result, str):
+                            agent_result = str(agent_result)
+                        format_agent_result = re.sub(r'\n+', '\n', agent_result).strip()
+
+                        if has_answer_chunk or format_agent_result:
+                            final_answer = format_agent_result or "（已返回流式答案）"
+                            # 关键修复：当模型没有产出流式 ANSWER 分片时，补发一次最终答案，避免前端只看到过程无结果
+                            if not has_answer_chunk and format_agent_result:
+                                yield "data: " + ResponseFactory.build_text(
+                                    format_agent_result, ContentKind.ANSWER
+                                ).model_dump_json() + "\n\n"
+                            break
+
+                        raise RuntimeError("模型未产出可用回答")
+                    except Exception as e:
+                        final_error = str(e)
+                        yield "data: " + ResponseFactory.build_text(
+                            f"⚠️ 本次执行异常：{final_error}", ContentKind.PROCESS
+                        ).model_dump_json() + "\n\n"
+                        logger.warning(f"第{attempt}次处理失败: {final_error}")
+
+            # MCPSessionManager 退出后继续执行（连接已关闭）
 
             if not final_answer:
                 degrade_notice = (
@@ -176,8 +211,14 @@ class MultiAgentService:
 
             yield "data: " + ResponseFactory.build_finish().model_dump_json() + "\n\n"
 
+            # 保存会话历史：包含思考过程
+            if process_logs:
+                # 将思考过程合并为一条消息
+                process_content = "\n".join(process_logs)
+                chat_history.append({"role": "process", "content": process_content})
+
             chat_history.append({"role": "assistant", "content": final_answer})
-            session_service.save_history(user_id, session_id, chat_history)
+            await session_service.save_history(user_id, session_id, chat_history)
         except Exception as e:
             logger.error(f"AgentService.process_query执行出错: {str(e)}")
             logger.debug(f"异常详情: {traceback.format_exc()}")

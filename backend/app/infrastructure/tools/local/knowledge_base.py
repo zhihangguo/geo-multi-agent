@@ -70,7 +70,8 @@ async def query_knowledge_raw(question: str) -> Dict:
 
 
 @function_tool
-async def query_knowledge(question: str) -> Dict:
+async def query_knowledge_tool(question: str) -> Dict:
+    """Agents SDK 专用工具封装：直接透传 query_knowledge_raw 的返回结果。"""
     return await query_knowledge_raw(question=question)
 
 

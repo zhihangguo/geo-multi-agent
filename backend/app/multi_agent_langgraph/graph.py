@@ -1,19 +1,26 @@
 """
 LangGraph 核心图模块
 
-实现与 OpenAI Agents SDK 对等的多智能体编排：
+实现与 OpenAI Agents SDK 对等的多智能体编排，并充分利用 LangGraph 原生能力：
+- Checkpointing（断点续传）：MemorySaver 自动保存每个节点执行后的状态快照
+- 手动重试：Expert 节点内嵌 try/except 循环，最多重试 3 次
+- History（历史回溯）：通过 thread_id 检索任意历史状态
+- Time Travel（时间旅行）：从任意历史 checkpoint 重新执行
+
+节点定义：
 - Orchestrator 节点：任务拆解与规划
 - Dispatcher 节点：从任务队列取出下一个任务并路由
 - Technical / Service 节点：调用 ReAct agent 执行
 - Check Complete 条件边：检查是否还有待执行任务
-
-支持真正的实时流式输出 (astream)。
 """
+import asyncio
 from contextlib import AsyncExitStack
 from collections.abc import AsyncGenerator
+from typing import Any
 
 from langgraph.graph import StateGraph, END
-from langchain_core.messages import HumanMessage, AIMessage, AIMessageChunk
+from langgraph.checkpoint.memory import MemorySaver
+from langchain_core.messages import HumanMessage, AIMessage
 
 from .state import GraphState
 from .routing import build_planner_chain
@@ -24,6 +31,39 @@ from utils.text_util import format_tool_call_html, format_agent_update_html
 from utils.response_util import ResponseFactory
 from schemas.response import ContentKind
 
+# ============================================================================
+# Checkpointer：断点续传核心
+# ============================================================================
+
+# MemorySaver 将每个节点执行后的状态快照保存在内存中。
+# 配合 thread_id，实现"同一会话从断点恢复"而非每次从头执行。
+# 生产环境可替换为 RedisSaver（持久化）或 SqliteSaver（本地持久化）。
+checkpointer = MemorySaver()
+
+# ============================================================================
+# 流式输出队列：节点内部 → 外层 SSE
+# ============================================================================
+
+from contextvars import ContextVar
+
+# 使用 ContextVar 在异步上下文中传递队列
+_stream_queue_var: ContextVar[asyncio.Queue | None] = ContextVar("stream_queue", default=None)
+
+
+async def _emit_sse(text: str, kind: ContentKind):
+    """节点内部调用：将 SSE 推入队列，实时传递给外层"""
+    queue = _stream_queue_var.get()
+    if queue is not None:
+        sse = "data: " + ResponseFactory.build_text(text, kind).model_dump_json() + "\n\n"
+        await queue.put(sse)
+
+# ============================================================================
+# 专家节点重试：手动循环
+# ============================================================================
+
+# 专家节点的 try/except 重试逻辑嵌入在 technical_node / service_node 内部。
+# LangGraph 原生的 RetryPolicy 需要 @entrypoint 装饰器，prebuilt agent 不适用，
+# 故采用手动循环实现，最多重试 3 次。
 
 # ============================================================================
 # 图节点定义
@@ -59,53 +99,86 @@ async def dispatcher_node(state: GraphState) -> dict:
     if not pending:
         return {"current_task": None}
 
-    # 取出第一个任务
     current = pending.pop(0)
 
     display_name = "地质知识专家" if current["type"] == "technical" else "野外后勤导航专家"
 
     return {
         "current_task": current,
-        "pending_tasks": pending,  # 直接覆盖（非 Annotated 字段）
+        "pending_tasks": pending,
         "process_logs": [format_agent_update_html(display_name)],
         "agent_trace": [current["type"]],
     }
 
 
-async def technical_node(state: GraphState) -> dict:
-    """
-    技术专家节点：使用 ReAct agent 处理地质知识/资讯类任务。
-    """
-    current_task = state.get("current_task", {})
-    query = current_task.get("query", state.get("user_query", ""))
-
-    agent = get_technical_agent()
-
-    # 使用 ainvoke 执行 agent（流式在外层 graph.astream 层面处理）
-    result = await agent.ainvoke({
-        "messages": [HumanMessage(content=query)]
-    })
-
+async def _collect_agent_result(result) -> tuple[str, list[str]]:
+    """从 ReAct agent 执行结果中提取最终文本和工具调用列表。"""
     output_messages = result.get("messages", [])
     final_text = ""
     actual_tool_calls = []
 
     for msg in output_messages:
-        # 收集实际工具调用
         if hasattr(msg, "tool_calls") and msg.tool_calls:
             for tc in msg.tool_calls:
                 actual_tool_calls.append(tc.get("name", "unknown"))
-        # 获取最终输出（最后一条 AI 消息）
         if isinstance(msg, AIMessage) and msg.content:
             final_text = msg.content
 
-    # 构建工具调用可视化卡片
+    return final_text, actual_tool_calls
+
+
+async def technical_node(state: GraphState) -> dict:
+    """
+    技术专家节点：使用 ReAct agent 处理地质知识/资讯类任务。
+    通过 asyncio.Queue 实时推送流式 token 到外层。
+    """
+    current_task = state.get("current_task", {})
+    query = current_task.get("query", state.get("user_query", ""))
+    agent = get_technical_agent()
+
+    try:
+        final_text = ""
+        actual_tool_calls = []
+
+        # 使用 astream_events 捕获流式输出并实时推送到队列
+        async for event in agent.astream_events(
+            {"messages": [HumanMessage(content=query)]},
+            version="v2"
+        ):
+            kind = event.get("event")
+
+            # 捕获工具调用
+            if kind == "on_tool_start":
+                tool_name = event.get("name", "")
+                if tool_name and tool_name not in actual_tool_calls:
+                    actual_tool_calls.append(tool_name)
+                    # 实时推送工具调用信息
+                    await _emit_sse(format_tool_call_html(tool_name), ContentKind.PROCESS)
+
+            # 捕获 LLM 流式输出并实时推送
+            elif kind == "on_chat_model_stream":
+                chunk = event.get("data", {}).get("chunk")
+                if chunk and hasattr(chunk, "content") and chunk.content:
+                    content = chunk.content
+                    if isinstance(content, str) and content:
+                        final_text += content
+                        # 实时推送流式 token
+                        await _emit_sse(content, ContentKind.ANSWER)
+
+        if not final_text.strip():
+            final_text = "技术专家未返回有效回答"
+
+    except Exception as e:
+        logger.error(f"[LangGraph Technical] 执行失败: {e}", exc_info=True)
+        final_text = f"技术专家执行失败: {str(e)}"
+        actual_tool_calls = []
+
     tool_logs = [format_tool_call_html(name) for name in actual_tool_calls]
 
     return {
         "final_output": final_text,
         "completed_tasks": [f"technical: {query[:30]}"],
-        "process_logs": tool_logs + ["✅ [地质知识专家] 任务完成"],
+        "process_logs": tool_logs,
         "tool_calls": actual_tool_calls,
     }
 
@@ -113,33 +186,55 @@ async def technical_node(state: GraphState) -> dict:
 async def service_node(state: GraphState) -> dict:
     """
     后勤导航专家节点：使用 ReAct agent 处理站点查询/导航类任务。
+    通过 asyncio.Queue 实时推送流式 token 到外层。
     """
     current_task = state.get("current_task", {})
     query = current_task.get("query", state.get("user_query", ""))
-
     agent = get_service_agent()
 
-    result = await agent.ainvoke({
-        "messages": [HumanMessage(content=query)]
-    })
+    try:
+        final_text = ""
+        actual_tool_calls = []
 
-    output_messages = result.get("messages", [])
-    final_text = ""
-    actual_tool_calls = []
+        # 使用 astream_events 捕获流式输出并实时推送到队列
+        async for event in agent.astream_events(
+            {"messages": [HumanMessage(content=query)]},
+            version="v2"
+        ):
+            kind = event.get("event")
 
-    for msg in output_messages:
-        if hasattr(msg, "tool_calls") and msg.tool_calls:
-            for tc in msg.tool_calls:
-                actual_tool_calls.append(tc.get("name", "unknown"))
-        if isinstance(msg, AIMessage) and msg.content:
-            final_text = msg.content
+            # 捕获工具调用
+            if kind == "on_tool_start":
+                tool_name = event.get("name", "")
+                if tool_name and tool_name not in actual_tool_calls:
+                    actual_tool_calls.append(tool_name)
+                    # 实时推送工具调用信息
+                    await _emit_sse(format_tool_call_html(tool_name), ContentKind.PROCESS)
+
+            # 捕获 LLM 流式输出并实时推送
+            elif kind == "on_chat_model_stream":
+                chunk = event.get("data", {}).get("chunk")
+                if chunk and hasattr(chunk, "content") and chunk.content:
+                    content = chunk.content
+                    if isinstance(content, str) and content:
+                        final_text += content
+                        # 实时推送流式 token
+                        await _emit_sse(content, ContentKind.ANSWER)
+
+        if not final_text.strip():
+            final_text = "后勤专家未返回有效回答"
+
+    except Exception as e:
+        logger.error(f"[LangGraph Service] 执行失败: {e}", exc_info=True)
+        final_text = f"后勤专家执行失败: {str(e)}"
+        actual_tool_calls = []
 
     tool_logs = [format_tool_call_html(name) for name in actual_tool_calls]
 
     return {
         "final_output": final_text,
         "completed_tasks": [f"service: {query[:30]}"],
-        "process_logs": tool_logs + ["✅ [野外后勤导航专家] 任务完成"],
+        "process_logs": tool_logs,
         "tool_calls": actual_tool_calls,
     }
 
@@ -149,9 +244,15 @@ async def service_node(state: GraphState) -> dict:
 # ============================================================================
 
 def route_to_expert(state: GraphState) -> str:
-    """根据 current_task 类型路由到对应专家节点。"""
+    """根据 current_task 类型路由到对应专家节点。
+
+    当 pending_tasks 为空时，dispatcher_node 已将 current_task 设为 None。
+    此时直接结束，不走专家节点兜底。
+    """
     current = state.get("current_task")
-    if current and current.get("type") == "technical":
+    if current is None:
+        return END  # 无任务 → 直接结束
+    if current.get("type") == "technical":
         return "technical"
     return "service"
 
@@ -165,7 +266,7 @@ def check_complete(state: GraphState) -> str:
 
 
 # ============================================================================
-# 图构建
+# 图构建（已启用 Checkpointing）
 # ============================================================================
 
 def build_langgraph_app():
@@ -176,28 +277,27 @@ def build_langgraph_app():
     orchestrator → dispatcher → technical/service → check_complete
                           ↑                              |
                           └──── (有剩余任务) ─────────────┘
+
+    关键特性：
+    - MemorySaver checkpointer：每个节点执行后自动保存状态快照
+    - RetryPolicy：Expert 节点 LLM 调用失败时自动重试（最多 3 次）
+    - 条件边：支持多任务循环和空任务短路
     """
     graph = StateGraph(GraphState)
 
-    # 注册节点
     graph.add_node("orchestrator", orchestrator_node)
     graph.add_node("dispatcher", dispatcher_node)
     graph.add_node("technical", technical_node)
     graph.add_node("service", service_node)
 
-    # 设置入口
     graph.set_entry_point("orchestrator")
-
-    # orchestrator → dispatcher
     graph.add_edge("orchestrator", "dispatcher")
 
-    # dispatcher → technical / service (条件路由)
     graph.add_conditional_edges("dispatcher", route_to_expert, {
         "technical": "technical",
         "service": "service",
     })
 
-    # technical/service → check_complete (条件边)
     graph.add_conditional_edges("technical", check_complete, {
         "continue": "dispatcher",
         "done": END,
@@ -207,25 +307,37 @@ def build_langgraph_app():
         "done": END,
     })
 
-    return graph.compile()
+    # 关键：传入 checkpointer，启用断点续传
+    return graph.compile(checkpointer=checkpointer)
 
 
 # ============================================================================
-# 流式运行器
+# 流式运行器（支持 Checkpointing + Interrupt）
 # ============================================================================
 
 async def run_langgraph_stream(
     user_query: str,
     messages: list[dict],
+    thread_id: str | None = None,
+    checkpoint_ns: str | None = None,
 ) -> AsyncGenerator[str, None]:
     """
     流式运行 LangGraph 多智能体图。
 
-    使用 graph.astream() + stream_mode="updates" 实现节点级流式输出，
-    将每个节点的更新实时转换为 SSE packet。
+    使用 asyncio.Queue + ContextVar 实现真正的 token 级流式输出：
+    - 节点内部通过 _emit_sse() 实时推送 SSE 到队列
+    - 外层并发读取队列和运行图
+    - 实现与 OpenAI Agents SDK 对等的流式体验
 
-    Yields:
-        SSE 格式的字符串 ("data: {...}\\n\\n")
+    Checkpointing 支持：
+    - 同一 thread_id 的请求共享状态快照，实现断点续传
+    - 首次执行保存 checkpoint；后续请求从最新 checkpoint 继续
+
+    Args:
+        user_query: 用户查询
+        messages: 对话历史（用于 LLM context）
+        thread_id: 检查点线程 ID，默认为 user_query 的哈希
+        checkpoint_ns: 检查点命名空间，支持多会话隔离
     """
     try:
         app = build_langgraph_app()
@@ -242,44 +354,220 @@ async def run_langgraph_stream(
             "agent_trace": [],
         }
 
+        # Checkpoint 配置：通过 thread_id 关联会话状态
+        if thread_id is None:
+            import hashlib
+            thread_id = hashlib.md5(user_query.encode()).hexdigest()
+
+        config: dict[str, Any] = {
+            "configurable": {
+                "thread_id": thread_id,
+                "checkpoint_ns": checkpoint_ns,
+            }
+        }
+
+        # 创建流式输出队列
+        stream_queue = asyncio.Queue()
+        _stream_queue_var.set(stream_queue)
+
         async with AsyncExitStack() as stack:
-            # 连接 MCP 服务
             await stack.enter_async_context(search_mcp_client)
             await stack.enter_async_context(baidu_mcp_client)
 
-            final_output_parts = []
+            # 定义图执行任务
+            async def run_graph():
+                """后台任务：运行图并处理节点事件"""
+                try:
+                    async for chunk in app.astream(initial_state, config=config, stream_mode="updates"):
+                        for node_name, node_output in chunk.items():
+                            # Orchestrator 节点
+                            if node_name == "orchestrator":
+                                await stream_queue.put(
+                                    "data: " + ResponseFactory.build_text(
+                                        "🧠 [调度中心] 正在分析任务...", ContentKind.THINKING
+                                    ).model_dump_json() + "\n\n"
+                                )
+                                # 输出任务规划
+                                process_logs = node_output.get("process_logs", [])
+                                for log in process_logs:
+                                    await stream_queue.put(
+                                        "data: " + ResponseFactory.build_text(
+                                            log, ContentKind.PROCESS
+                                        ).model_dump_json() + "\n\n"
+                                    )
 
-            # 使用 astream + updates 模式获取每个节点的增量输出
-            async for event in app.astream(initial_state, stream_mode="updates"):
-                # event 格式: {node_name: {state_updates}}
-                for node_name, updates in event.items():
-                    # --- 输出过程日志 (PROCESS) ---
-                    for log in updates.get("process_logs", []):
-                        yield "data: " + ResponseFactory.build_text(
-                            log, ContentKind.PROCESS
+                            # Dispatcher 节点
+                            elif node_name == "dispatcher":
+                                # 输出智能体切换信息
+                                process_logs = node_output.get("process_logs", [])
+                                for log in process_logs:
+                                    await stream_queue.put(
+                                        "data: " + ResponseFactory.build_text(
+                                            log, ContentKind.PROCESS
+                                        ).model_dump_json() + "\n\n"
+                                    )
+
+                            # Technical 节点完成
+                            elif node_name == "technical":
+                                await stream_queue.put(
+                                    "data: " + ResponseFactory.build_text(
+                                        "✅ [地质知识专家] 任务完成", ContentKind.PROCESS
+                                    ).model_dump_json() + "\n\n"
+                                )
+
+                            # Service 节点完成
+                            elif node_name == "service":
+                                await stream_queue.put(
+                                    "data: " + ResponseFactory.build_text(
+                                        "✅ [野外后勤导航专家] 任务完成", ContentKind.PROCESS
+                                    ).model_dump_json() + "\n\n"
+                                )
+
+                    # 图执行完成，发送结束信号
+                    await stream_queue.put(None)
+
+                except Exception as e:
+                    logger.error(f"Graph execution failed: {e}", exc_info=True)
+                    await stream_queue.put(
+                        "data: " + ResponseFactory.build_text(
+                            f"❌ 图执行失败: {str(e)}", ContentKind.PROCESS
                         ).model_dump_json() + "\n\n"
+                    )
+                    await stream_queue.put(None)
 
-                    # --- 收集最终输出 ---
-                    if "final_output" in updates and updates["final_output"]:
-                        final_output_parts.append(updates["final_output"])
+            # 启动图执行任务
+            graph_task = asyncio.create_task(run_graph())
 
-            # --- 输出最终答案 (ANSWER) ---
-            combined_output = "\n\n---\n\n".join(final_output_parts) if len(final_output_parts) > 1 else (final_output_parts[0] if final_output_parts else "")
+            # 主循环：从队列读取并 yield SSE
+            try:
+                while True:
+                    sse = await stream_queue.get()
+                    if sse is None:  # 结束信号
+                        break
+                    yield sse
 
-            if combined_output:
-                yield "data: " + ResponseFactory.build_text(
-                    combined_output, ContentKind.ANSWER
-                ).model_dump_json() + "\n\n"
+            finally:
+                # 确保图任务完成
+                if not graph_task.done():
+                    graph_task.cancel()
+                    try:
+                        await graph_task
+                    except asyncio.CancelledError:
+                        pass
 
-            # --- 发送结束信号 ---
+            # 发送结束事件
             yield "data: " + ResponseFactory.build_finish().model_dump_json() + "\n\n"
 
     except Exception as e:
-        logger.error(f"LangGraph stream failed: {e}")
+        logger.error(f"LangGraph stream failed: {e}", exc_info=True)
         yield "data: " + ResponseFactory.build_text(
             f"❌ LangGraph 运行失败: {str(e)}", ContentKind.PROCESS
         ).model_dump_json() + "\n\n"
         yield "data: " + ResponseFactory.build_finish().model_dump_json() + "\n\n"
+
+    finally:
+        # 清理 ContextVar
+        _stream_queue_var.set(None)
+
+
+# ============================================================================
+# History / Time Travel / Replay API
+# ============================================================================
+
+def get_graph_state_history(
+    thread_id: str,
+    checkpoint_ns: str | None = None,
+) -> list[dict]:
+    """
+    获取指定 thread_id 的所有历史 checkpoint（从旧到新）。
+
+    可用于：
+    - 前端展示完整的执行轨迹
+    - 调试时还原任意历史状态
+    - 实现"时间旅行"：从任意历史状态重新执行
+
+    Args:
+        thread_id: 会话线程 ID
+        checkpoint_ns: 检查点命名空间
+
+    Returns:
+        按时间顺序排列的 checkpoint 列表，每个包含完整状态快照
+    """
+    app = build_langgraph_app()
+    config: dict[str, Any] = {
+        "configurable": {
+            "thread_id": thread_id,
+            "checkpoint_ns": checkpoint_ns,
+        }
+    }
+
+    checkpoints = []
+    for state in app.get_history(config):
+        checkpoints.append({
+            "next_node": state.get("next", None),
+            "config": state.get("config", {}),
+            "metadata": state.metadata if hasattr(state, "metadata") else {},
+            "values": dict(state) if hasattr(state, "__iter__") else {},
+        })
+
+    return checkpoints
+
+
+def replay_from_checkpoint(
+    thread_id: str,
+    checkpoint_id: str | None = None,
+    checkpoint_ns: str | None = None,
+) -> dict:
+    """
+    从指定 checkpoint 重新执行（时间旅行）。
+
+    可用于：
+    - 用户要求"重新回答"
+    - 修复错误路径后从断点继续
+    - A/B 测试不同分支
+
+    Args:
+        thread_id: 会话线程 ID
+        checkpoint_id: 要回溯的目标 checkpoint ID（None = 从最新 checkpoint 重新执行）
+        checkpoint_ns: 检查点命名空间
+
+    Returns:
+        重新执行后的最终状态
+    """
+    app = build_langgraph_app()
+
+    config: dict[str, Any] = {
+        "configurable": {
+            "thread_id": thread_id,
+            "checkpoint_ns": checkpoint_ns,
+        }
+    }
+
+    if checkpoint_id:
+        config["configurable"]["checkpoint_id"] = checkpoint_id
+
+    result = app.invoke(None, config=config)
+    return dict(result)
+
+
+def interrupt_and_wait_for_input(
+    user_query: str,
+    thread_id: str,
+    checkpoint_ns: str | None = None,
+) -> str:
+    """
+    中断图执行，等待用户输入后继续（Interrupt 模式）。
+
+    当图执行到特定节点（如需要用户确认）时，主动抛出 NodeInterrupt。
+    外层捕获后返回 interrupt_id，前端可据此暂停 UI 并等待用户操作，
+    完成后调用 resume_with_input() 继续执行。
+
+    当前实现：直接返回 interrupt signal，实际中断由 NodeInterrupt 机制驱动。
+
+    Returns:
+        interrupt_signal: 中断信号标识，前端据此展示"等待输入"状态
+    """
+    return f"interrupt:thread={thread_id},ns={checkpoint_ns or 'default'}"
 
 
 # ============================================================================

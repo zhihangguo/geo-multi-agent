@@ -9,6 +9,7 @@ def build_main_model() -> ChatOpenAI:
         api_key=settings.SF_API_KEY,
         model=settings.MAIN_MODEL_NAME,
         temperature=0,
+        streaming=True,  # 启用流式输出
     )
 
 
@@ -19,4 +20,5 @@ def build_sub_model() -> ChatOpenAI:
         api_key=settings.AL_BAILIAN_API_KEY,
         model=settings.SUB_MODEL_NAME,
         temperature=0,
+        streaming=True,  # 启用流式输出
     )

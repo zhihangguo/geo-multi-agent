@@ -54,8 +54,20 @@ async def process_stream_response(streaming_result: RunResultStreaming, emit_fin
             if hasattr(event, "name") and event.name == "tool_called":
                 if isinstance(event.item, ToolCallItem) and event.item.type == "tool_call_item":
                     tool_name = event.item.raw_item.name
+                    tool_args = event.item.raw_item.arguments
 
-                    text = format_tool_call_html(tool_name)
+                    # 格式化工具名称映射（与 LangGraph 对齐）
+                    tool_display_name = {
+                        "query_knowledge_tool": "知识库查询",
+                        "web_search_tool": "联网搜索",
+                        "resolve_user_location_from_text": "位置解析",
+                        "query_nearest_repair_shops_by_coords": "查询附近站点",
+                        "map_geocode": "地址解析",
+                        "map_ip_location": "IP定位",
+                        "map_uri": "生成导航链接",
+                    }.get(tool_name, tool_name)
+
+                    text = format_tool_call_html(tool_display_name)
                     # 构建 PROCESS 类型消息
                     yield "data: " + ResponseFactory.build_text(
                         text, ContentKind.PROCESS

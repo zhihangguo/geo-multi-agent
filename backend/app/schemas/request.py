@@ -40,3 +40,30 @@ class DeleteSessionRequest(BaseModel):
     user_id: str = Field(description="用户唯一标识符")
     session_id: str = Field(description="要删除的会话ID")
 
+
+# ============================================================================
+# LangGraph 原生能力 API 请求模型
+# ============================================================================
+
+class HistoryRequest(BaseModel):
+    """
+    获取执行历史请求体。
+
+    用于 /api/langgraph/history 和 /api/langgraph/pause。
+    """
+    user_id: str = Field(description="用户唯一标识符")
+    session_id: Optional[str] = Field(description="会话ID（默认使用 default_session）", default=None)
+    pause_message: Optional[str] = Field(description="暂停时显示给用户的消息", default=None)
+
+
+class ReplayRequest(BaseModel):
+    """
+    重放/恢复执行请求体。
+
+    用于 /api/langgraph/replay 和 /api/langgraph/resume。
+    """
+    user_id: str = Field(description="用户唯一标识符")
+    session_id: Optional[str] = Field(description="会话ID（默认使用 default_session）", default=None)
+    checkpoint_id: Optional[str] = Field(description="目标 checkpoint ID（None = 从最新开始）", default=None)
+    resume_input: Optional[str] = Field(description="恢复时传递给图的输入（如用户确认内容）", default=None)
+

@@ -82,12 +82,13 @@
               </div> -->
               
               <!-- 侧边栏展开/收起按钮 - 与logo水平对齐 -->
-              <button 
-                class="toggle-sidebar-btn" 
+              <button
+                class="toggle-sidebar-btn"
                 @click="toggleSidebar"
                 :title="isSidebarExpanded ? '收起侧边栏' : '展开侧边栏'"
               >
-                {{ isSidebarExpanded ? '‹' : '›' }}
+                <span v-if="isSidebarExpanded">◀</span>
+                <span v-else>▶</span>
               </button>
             </div>
             
@@ -134,15 +135,12 @@
 
             </div>
 
-            <!-- 历史会话列表 - 仅在展开状态显示 -->
+            <!-- 历史会话列表 - 直接显示，不需要点击导航项 -->
             <div v-show="isSidebarExpanded" class="sidebar-main">
-              <div class="navigation-item" @click="toggleSessions">
-                <svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 1024 1024" class="nav-icon">
-                  <path d="M512 81.066667c-233.301333 0-422.4 189.098667-422.4 422.4s189.098667 422.4 422.4 422.4 422.4-189.098667 422.4-422.4-189.098667-422.4-422.4-422.4z m-345.6 422.4a345.6 345.6 0 1 1 691.2 0 345.6 345.6 0 1 1-691.2 0z m379.733333-174.933334a38.4 38.4 0 0 0-76.8 0v187.733334a38.4 38.4 0 0 0 11.264 27.136l93.866667 93.866666a38.4 38.4 0 1 0 54.272-54.272L546.133333 500.352V328.533333z" fill="currentColor"></path>
-                </svg>
-                <span class="nav-text">协作记录</span>
+              <div class="sessions-list-header">
+                <span class="sessions-title">历史会话</span>
               </div>
-              <div class="sessions-list" v-show="showSessions">
+              <div class="sessions-list">
                 <div class="session-search-wrap">
                   <input
                     v-model="sessionSearchKeyword"
@@ -205,36 +203,55 @@
         
         <!-- 右侧显示区域 -->
         <div class="main-container">
+          <!-- 用户头像 - 固定在右上角 -->
+          <div class="user-avatar-container-fixed" ref="avatarContainerRef">
+            <!-- 头像，点击时切换用户信息显示状态 -->
+            <img
+              :src="userAvatar"
+              class="user-avatar"
+              alt="用户头像"
+              @click="toggleUserInfo"
+              tabindex="0"
+            />
+
+            <!-- 用户信息下拉框，点击头像时显示/隐藏 -->
+            <div class="user-info-dropdown" v-show="showUserInfo">
+              <template v-if="currentUser">
+                <span class="user-name">{{ currentUser }}</span>
+                <button class="btn-tertiary upload-avatar-btn" @click="triggerAvatarUpload">
+                  <span role="img" class="semi-icon semi-icon-default text-16">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" fill="none" viewBox="0 0 24 24">
+                      <path fill="currentColor" d="M12 4a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM6 8a6 6 0 1 1 12 0A6 6 0 0 1 6 8zm2 10a3 3 0 0 0-3 3 1 1 0 1 1-2 0 5 5 0 0 1 5-5h8a5 5 0 0 1 5 5 1 1 0 1 1-2 0 3 3 0 0 0-3-3H8z"/>
+                    </svg>
+                  </span>
+                  上传头像
+                </button>
+                <input
+                  type="file"
+                  ref="avatarInput"
+                  accept="image/*"
+                  style="display: none"
+                  @change="handleAvatarUpload"
+                />
+                <button data-testid="setup_logout" class="btn-tertiary" style="width: 100%; justify-content: flex-start;" @click="handleLogout">
+                  <span role="img" class="semi-icon semi-icon-default text-16">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" fill="none" viewBox="0 0 24 24">
+                      <path fill="currentColor" fill-rule="evenodd" d="M14 3H4.5v18H14v-5h2v5a2 2 0 0 1-2 2H4.5a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2H14a2 2 0 0 1 2 2v5h-2zm5.207 4.793a1 1 0 1 0-1.414 1.414L19.586 11H10.5a1 1 0 1 0 0 2h9.086l-1.793 1.793a1 1 0 0 0 1.414 1.414l3.5-3.5a1 1 0 0 0 0-1.414z" clip-rule="evenodd"></path>
+                    </svg>
+                  </span>
+                  退出登录
+                </button>
+              </template>
+              <template v-else>
+                <span class="user-name">当前未登录</span>
+                <button class="login-button btn-primary" @click="goToLogin">请登录</button>
+              </template>
+            </div>
+          </div>
+
           <!-- 最终结果显示框 -->
           <div class="result-container" :class="[{ 'processing': isProcessing }, selectedArchitecture === 'langgraph' ? 'arch-langgraph' : 'arch-agents']">
-            <!-- 顶部区域，包含用户信息 -->
-            <div class="top-user-section">
-              <!-- 用户信息和操作按钮 - 放在流程框上方 -->
-              <div class="user-avatar-container" ref="avatarContainerRef">
-                <!-- 头像，点击时切换用户信息显示状态 -->
-                <img 
-                  src="https://p3-flow-imagex-sign.byteimg.com/user-avatar/assets/e7b19241fb224cea967dfaea35448102_1080_1080.png~tplv-a9rns2rl98-icon-tiny.png?rcl=202511070904143F9B891FA2E40D7123F0&rk3s=8e244e95&rrcfp=76e58463&x-expires=1765155855&x-signature=nqQBx1W9ABfrm%2FRKkEYZUzsYjE0%3D" 
-                  class="user-avatar" 
-                  alt="用户头像" 
-                  @click="toggleUserInfo"
-                  tabindex="0"
-                />
-                
-                <!-- 用户信息下拉框，点击头像时显示/隐藏 -->
-                <div class="user-info-dropdown" v-show="showUserInfo">
-                  <template v-if="currentUser">
-                    <span class="user-name">{{ currentUser }}</span>
-                    <button data-testid="setup_logout" class="btn-tertiary" style="width: 100%; justify-content: flex-start;" @click="handleLogout"><span role="img" class="semi-icon semi-icon-default text-16"><svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" fill="none" viewBox="0 0 24 24"><path fill="currentColor" fill-rule="evenodd" d="M14 3H4.5v18H14v-5h2v5a2 2 0 0 1-2 2H4.5a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2H14a2 2 0 0 1 2 2v5h-2zm5.207 4.793a1 1 0 1 0-1.414 1.414L19.586 11H10.5a1 1 0 1 0 0 2h9.086l-1.793 1.793a1 1 0 0 0 1.414 1.414l3.5-3.5a1 1 0 0 0 0-1.414z" clip-rule="evenodd"></path></svg></span>退出登录</button>
-                  </template>
-                  <template v-else>
-                    <span class="user-name">当前未登录</span>
-                    <button class="login-button btn-primary" @click="goToLogin">请登录</button>
-                  </template>
-                </div>
-              </div>
-            </div>
-
-          
+            <!-- 移除顶部用户信息区域 -->
             
             <div v-if="degradeBanner.visible" class="degrade-banner">
               <div class="degrade-banner-title">知识库降级运行中</div>
@@ -284,48 +301,125 @@
               </div>
             </div>
               
-              <!-- 用户输入框 - 移动到最终结果输出框内 -->
+              <!-- 用户输入框 - GPT/豆包风格 -->
               <div class="input-container">
-                <div class="qa-controls">
-                  <div class="qa-control-group qa-arch-group">
-                    <span class="qa-control-label">架构</span>
-                    <div class="arch-switch">
-                      <button class="arch-btn" :class="{ active: selectedArchitecture === 'agents' }" @click="switchArchitecture('agents')">Orchestrator</button>
-                      <button class="arch-btn" :class="{ active: selectedArchitecture === 'langgraph' }" @click="switchArchitecture('langgraph')">Graph</button>
-                    </div>
-                    <span class="arch-current">当前：{{ selectedArchitecture === 'agents' ? 'Orchestrator' : 'Graph' }}</span>
-                  </div>
-                  <div class="qa-control-group">
-                    <span class="qa-control-label">模型</span>
-                    <button class="chip-btn" :class="{ active: showModelConfig }" @click="showModelConfig = !showModelConfig">{{ showModelConfig ? '收起配置' : '配置模型' }}</button>
-                    <button class="chip-btn" :class="{ active: !!runtimeModelConfig.model }" @click="clearModelConfig">默认模型</button>
-                  </div>
-                </div>
-
+                <!-- 模型配置面板 -->
                 <div v-if="showModelConfig" class="model-config-panel">
-                  <input v-model="runtimeModelConfig.base_url" type="text" placeholder="Base URL (OpenAI兼容)" />
-                  <input v-model="runtimeModelConfig.model" type="text" placeholder="模型名，如 gpt-4o-mini" />
-                  <input v-model="runtimeModelConfig.api_key" type="password" placeholder="API Key" />
+                  <div class="model-config-section">
+                    <div class="model-config-label">当前问答模型</div>
+                    <input v-model="runtimeModelConfig.chat_model" type="text" placeholder="如 qwen-plus" />
+                  </div>
+                  <div class="model-config-section">
+                    <div class="model-config-label">当前向量模型</div>
+                    <input v-model="runtimeModelConfig.embedding_model" type="text" placeholder="如 text-embedding-v3" />
+                  </div>
+                  <div class="model-config-section full-width">
+                    <div class="model-config-label">Base URL (可选)</div>
+                    <input v-model="runtimeModelConfig.base_url" type="text" placeholder="OpenAI兼容端点" />
+                  </div>
+                  <div class="model-config-section full-width">
+                    <div class="model-config-label">API Key (可选)</div>
+                    <input v-model="runtimeModelConfig.api_key" type="password" placeholder="自定义API密钥" />
+                  </div>
                 </div>
 
-                <div class="textarea-with-button">
-                  <textarea
-                    v-model="userInput"
-                    placeholder="请输入任务，例如：现场采样路线规划、区域地质快报、钻孔记录整理..."
-                    @keyup.enter.exact="handleSend($event)"
-                    :disabled="isProcessing"
-                  ></textarea>
-                  <button 
-                    class="send-button btn-primary"
-                    :class="{ 'cancel-button': isProcessing, 'disabled': !userInput.trim() && !isProcessing }"
-                    :disabled="!userInput.trim() && !isProcessing"
-                    @click="isProcessing ? handleCancel() : handleSend()"
-                  >
-                    {{ isProcessing ? '■' : '发送' }}
-                  </button>
-                </div>
-                <div class="app-footer">
-                  <span>© 2026 GeoAssist Nova Lab. All rights reserved.</span>
+                <!-- 主输入框区域 -->
+                <div class="input-main">
+                  <!-- 附件预览区域 -->
+                  <div v-if="uploadedFiles.length > 0" class="file-preview-list">
+                    <div v-for="(file, index) in uploadedFiles" :key="index" class="file-preview-item">
+                      <span class="file-icon">📎</span>
+                      <span class="file-name" :title="file.name">{{ file.name }}</span>
+                      <button class="file-download" @click="downloadFile(file)" title="下载">⬇</button>
+                      <button class="file-remove" @click="removeFile(index)" title="移除">×</button>
+                    </div>
+                  </div>
+
+                  <div class="input-box">
+                    <!-- 文本输入区 - 顶部横跨整个宽度 -->
+                    <textarea
+                      ref="inputTextarea"
+                      v-model="userInput"
+                      placeholder="请输入任务，例如：现场采样路线规划、区域地质快报、钻孔记录整理..."
+                      @keyup.enter.exact="handleSend($event)"
+                      @input="autoResize"
+                      :disabled="isProcessing"
+                    ></textarea>
+
+                    <!-- 底部控制栏 -->
+                    <div class="input-bottom-bar">
+                      <!-- 左下角控制区 -->
+                      <div class="input-controls-left">
+                        <!-- 文件上传按钮 -->
+                        <label class="file-upload-btn" :class="{ disabled: isProcessing }">
+                          <input type="file" multiple accept=".txt,.md,.pdf,.doc,.docx,.png,.jpg,.jpeg,.gif" @change="handleFileUpload" :disabled="isProcessing" />
+                          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
+                          </svg>
+                        </label>
+
+                        <!-- 架构选择器 - 下拉菜单 -->
+                        <div class="arch-selector" ref="archSelectorRef">
+                          <button class="arch-trigger" @click="toggleArchMenu">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                              <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+                              <polyline points="2 17 12 22 22 17"></polyline>
+                              <polyline points="2 12 12 17 22 12"></polyline>
+                            </svg>
+                            <span>{{ selectedArchitecture === 'agents' ? 'OpenAI Agent' : 'LangGraph' }}</span>
+                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                              <polyline points="6 9 12 15 18 9"></polyline>
+                            </svg>
+                          </button>
+                          <div v-if="showArchMenu" class="arch-dropdown">
+                            <div class="arch-option" :class="{ active: selectedArchitecture === 'agents' }" @click="switchArchitecture('agents'); showArchMenu = false">
+                              <div class="arch-option-icon agents-icon">O</div>
+                              <div class="arch-option-info">
+                                <div class="arch-option-name">OpenAI Agent</div>
+                                <div class="arch-option-desc">智能编排 · 轻量高效</div>
+                              </div>
+                              <div v-if="selectedArchitecture === 'agents'" class="arch-option-check">✓</div>
+                            </div>
+                            <div class="arch-option" :class="{ active: selectedArchitecture === 'langgraph' }" @click="switchArchitecture('langgraph'); showArchMenu = false">
+                              <div class="arch-option-icon langgraph-icon">G</div>
+                              <div class="arch-option-info">
+                                <div class="arch-option-name">LangGraph</div>
+                                <div class="arch-option-desc">状态图谱 · 精细控制</div>
+                              </div>
+                              <div v-if="selectedArchitecture === 'langgraph'" class="arch-option-check">✓</div>
+                            </div>
+                          </div>
+                        </div>
+
+                        <!-- 模型选择器 -->
+                        <button class="model-trigger" @click="showModelConfig = !showModelConfig">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="3"></circle>
+                            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                          </svg>
+                          <span>{{ runtimeModelConfig.chat_model || '默认模型' }}</span>
+                        </button>
+                      </div>
+
+                      <!-- 右下角发送按钮 -->
+                      <button
+                        class="send-btn"
+                        :class="{ 'processing': isProcessing, disabled: (!userInput.trim() && uploadedFiles.length === 0 && !isProcessing) }"
+                        :disabled="!userInput.trim() && uploadedFiles.length === 0 && !isProcessing"
+                        @click="isProcessing ? handleCancel() : handleSend()"
+                      >
+                        <svg v-if="!isProcessing" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <line x1="22" y1="2" x2="11" y2="13"></line>
+                          <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                        </svg>
+                        <span v-if="!isProcessing" class="send-btn-text">发送</span>
+                        <svg v-else xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                          <rect x="6" y="6" width="12" height="12" rx="2"></rect>
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+
                 </div>
               </div>
           </div>
@@ -371,10 +465,109 @@ export default {
     const showUserInfo = ref(false);
     // 头像和下拉框的引用
     const avatarContainerRef = ref(null);
-    
+    const avatarInput = ref(null);
+
+    // 用户头像（从 localStorage 加载或使用默认头像）
+    const defaultAvatar = 'https://p3-flow-imagex-sign.byteimg.com/user-avatar/assets/e7b19241fb224cea967dfaea35448102_1080_1080.png~tplv-a9rns2rl98-icon-tiny.png?rcl=202511070904143F9B891FA2E40D7123F0&rk3s=8e244e95&rrcfp=76e58463&x-expires=1765155855&x-signature=nqQBx1W9ABfrm%2FRKkEYZUzsYjE0%3D';
+    const userAvatar = ref(localStorage.getItem('userAvatar') || defaultAvatar);
+
+    // 文件上传相关
+    const uploadedFiles = ref([]);
+
+    const handleFileUpload = (event) => {
+      const files = Array.from(event.target.files || []);
+      if (files.length === 0) return;
+
+      files.forEach(file => {
+        if (!uploadedFiles.value.some(f => f.name === file.name && f.size === file.size)) {
+          uploadedFiles.value.push({
+            name: file.name,
+            size: file.size,
+            type: file.type,
+            file: file
+          });
+        }
+      });
+      event.target.value = '';
+    };
+
+    const removeFile = (index) => {
+      uploadedFiles.value.splice(index, 1);
+    };
+
+    const downloadFile = (fileInfo) => {
+      const blob = new Blob([fileInfo.file], { type: fileInfo.type || 'application/octet-stream' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileInfo.name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    };
+
+    // 架构选择菜单
+    const showArchMenu = ref(false);
+    const archMenuPosition = ref('up'); // 'up' or 'down'
+    const archSelectorRef = ref(null);
+    const inputTextarea = ref(null);
+
+    const toggleArchMenu = () => {
+      if (showArchMenu.value) {
+        showArchMenu.value = false;
+      } else {
+        // 默认向上展开
+        archMenuPosition.value = 'up';
+        showArchMenu.value = true;
+      }
+    };
+
+    // 自动调整textarea高度
+    const autoResize = () => {
+      if (inputTextarea.value) {
+        inputTextarea.value.style.height = 'auto';
+        inputTextarea.value.style.height = Math.min(inputTextarea.value.scrollHeight, 200) + 'px';
+      }
+    };
+
     // 切换用户信息显示/隐藏
     const toggleUserInfo = () => {
       showUserInfo.value = !showUserInfo.value;
+    };
+
+    // 触发头像上传
+    const triggerAvatarUpload = () => {
+      avatarInput.value?.click();
+    };
+
+    // 处理头像上传
+    const handleAvatarUpload = (event) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+
+      // 检查文件类型
+      if (!file.type.startsWith('image/')) {
+        alert('请上传图片文件');
+        return;
+      }
+
+      // 检查文件大小（限制为 2MB）
+      if (file.size > 2 * 1024 * 1024) {
+        alert('图片大小不能超过 2MB');
+        return;
+      }
+
+      // 读取文件并转换为 base64
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const base64 = e.target.result;
+        userAvatar.value = base64;
+        // 保存到 localStorage
+        localStorage.setItem('userAvatar', base64);
+        showUserInfo.value = false;
+      };
+      reader.readAsDataURL(file);
     };
 
     // 点击外部收起下拉菜单
@@ -405,9 +598,9 @@ export default {
     if (savedUserId) {
       // 定义测试用户列表，与handleLogin中保持一致
       const validUsers = [
-        { username: 'root1', password: '123456', userId: 'root1' },
-        { username: 'root2', password: '123456', userId: 'root2' },
-        { username: 'root3', password: '123456', userId: 'root3' }
+        { username: 'root1', password: '', userId: 'root1' },
+        { username: 'root2', password: '', userId: 'root2' },
+        { username: 'root3', password: '', userId: 'root3' }
       ];
       
       // 查找对应的用户并设置currentUser
@@ -431,7 +624,13 @@ export default {
     const selectedArchitecture = ref('agents');
     const degradeBanner = ref({ visible: false, text: '' });
     const showModelConfig = ref(false);
-    const runtimeModelConfig = ref({ provider: 'custom', base_url: '', api_key: '', model: '' });
+    const runtimeModelConfig = ref({
+      provider: 'custom',
+      base_url: '',
+      api_key: '',
+      chat_model: '',
+      embedding_model: ''
+    });
     const sessionSearchKeyword = ref('');
     const openedSessionMenuId = ref('');
     const sessionMeta = ref({});
@@ -456,33 +655,49 @@ export default {
 
     
     // 处理知识库查询
-    const handleKnowledgeBase = () => {
+    const handleKnowledgeBase = async () => {
       console.log('打开知识库查询');
-      // 清空右侧内容但保持页面结构不变
+      selectedNavItem.value = 'knowledge';
+      selectedSessionId.value = '';
+      chatMessages.value = [];
       processMessages.value = [];
       answerText.value = '';
-      processContent.value = null;
-      selectedNavItem.value = 'knowledge';
-      // 清除历史会话选中状态
-      selectedSessionId.value = '';
+
+      // 显示知识库查询提示
+      chatMessages.value.push({
+        type: 'assistant',
+        content: '已切换到知识仓智搜模式。在此模式下，所有回答将基于 RAG 知识库内容，不会调用多智能体系统或联网搜索。'
+      });
     };
-    
+
     // 处理服务站查询
     const handleNetworkSearch = () => {
-  selectedNavItem.value = 'network';
-  selectedSessionId.value = '';
-  // 联网搜索功能逻辑可以在这里实现
-};
-
-const handleServiceStation = () => {
-      console.log('打开服务站查询');
-      // 清空右侧内容但保持页面结构不变
+      selectedNavItem.value = 'network';
+      selectedSessionId.value = '';
+      chatMessages.value = [];
       processMessages.value = [];
       answerText.value = '';
-      processContent.value = null;
+
+      // 显示待开发提示
+      chatMessages.value.push({
+        type: 'assistant',
+        content: '⚠️ 全网雷达功能正在开发中，敬请期待...'
+      });
+    };
+
+    const handleServiceStation = () => {
+      console.log('打开服务站查询');
       selectedNavItem.value = 'service';
-      // 清除历史会话选中状态
       selectedSessionId.value = '';
+      chatMessages.value = [];
+      processMessages.value = [];
+      answerText.value = '';
+
+      // 显示待开发提示
+      chatMessages.value.push({
+        type: 'assistant',
+        content: '⚠️ 服务枢纽功能正在开发中，敬请期待...'
+      });
     };
     
     // 历史会话相关状态
@@ -568,9 +783,9 @@ const handleServiceStation = () => {
       
       // 定义测试用户列表
       const validUsers = [
-        { username: 'root1', password: '123456', userId: 'root1' },
-        { username: 'root2', password: '123456', userId: 'root2' },
-        { username: 'root3', password: '123456', userId: 'root3' }
+        { username: 'root1', password: '', userId: 'root1' },
+        { username: 'root2', password: '', userId: 'root2' },
+        { username: 'root3', password: '', userId: 'root3' }
       ];
       
       // 查找用户
@@ -928,21 +1143,77 @@ const handleServiceStation = () => {
         
         // 请求发起时：添加用户消息后立即滚动到结果框底部
         scrollToBottom();
-        
-        // 准备请求数据，包含用户ID和选中的会话ID
+
+        // 如果是知识仓智搜模式，直接调用知识库 API
+        if (selectedNavItem.value === 'knowledge') {
+          try {
+            const response = await fetch('http://127.0.0.1:8000/api/knowledge_query', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                question: userInput.value.trim()
+              })
+            });
+
+            if (!response.ok) {
+              throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            const data = await response.json();
+            const answer = data.answer || '知识库未找到相关内容';
+
+            chatMessages.value.push({
+              type: 'assistant',
+              content: answer
+            });
+
+            scrollToBottom();
+          } catch (error) {
+            const errorMsg = `知识库查询失败: ${error.message}`;
+            chatMessages.value.push({
+              type: 'assistant',
+              content: errorMsg
+            });
+            console.error('Error:', error);
+          } finally {
+            isProcessing.value = false;
+            userInput.value = '';
+          }
+          return;
+        }
+
+        // 处理上传的文件内容
+        let attachmentsContent = '';
+        if (uploadedFiles.value.length > 0) {
+          for (const fileInfo of uploadedFiles.value) {
+            try {
+              const text = await fileInfo.file.text();
+              attachmentsContent += `\n\n【附件: ${fileInfo.name}】\n${text}\n`;
+            } catch (e) {
+              console.error('读取文件失败:', fileInfo.name, e);
+            }
+          }
+        }
+
+        // 清空上传的文件
+        uploadedFiles.value = [];
+
+        // 准备请求数据，包含用户ID、选中的会话ID和上传的文件内容
         const requestData = {
-          query: userInput.value.trim(),
+          query: userInput.value.trim() + attachmentsContent,
           context: {
             user_id: finalUserId,
             session_id: selectedSessionId.value || ''
           },
           mode: selectedArchitecture.value,
-          model_config: runtimeModelConfig.value?.base_url && runtimeModelConfig.value?.api_key && runtimeModelConfig.value?.model
+          model_config: runtimeModelConfig.value?.base_url && runtimeModelConfig.value?.api_key && runtimeModelConfig.value?.chat_model
             ? {
                 provider: runtimeModelConfig.value.provider || 'custom',
                 base_url: runtimeModelConfig.value.base_url,
                 api_key: runtimeModelConfig.value.api_key,
-                model: runtimeModelConfig.value.model,
+                model: runtimeModelConfig.value.chat_model,
               }
             : null,
         };
@@ -1277,7 +1548,10 @@ const handleServiceStation = () => {
           scrollToBottom();
         });
       }
-      
+
+      // 获取当前模型配置
+      fetchModelConfig();
+
       // 添加键盘快捷键监听器
       document.addEventListener('keydown', handleKeyDown);
     });
@@ -1301,7 +1575,13 @@ const handleServiceStation = () => {
     };
 
     const clearModelConfig = () => {
-      runtimeModelConfig.value = { provider: 'custom', base_url: '', api_key: '', model: '' };
+      runtimeModelConfig.value = {
+        provider: 'custom',
+        base_url: '',
+        api_key: '',
+        chat_model: '',
+        embedding_model: ''
+      };
       showModelConfig.value = false;
     };
 
@@ -1310,7 +1590,27 @@ const handleServiceStation = () => {
       isSidebarExpanded.value = !isSidebarExpanded.value;
       console.log('侧边栏状态:', isSidebarExpanded.value ? '展开' : '收起');
     };
-    
+
+    // 获取当前模型配置
+    const fetchModelConfig = async () => {
+      try {
+        const response = await fetch('http://127.0.0.1:8000/api/model_config');
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success && data.config) {
+            runtimeModelConfig.value.chat_model = data.config.chat_model || '';
+            runtimeModelConfig.value.embedding_model = data.config.embedding_model || '';
+            // 不覆盖用户自定义的 base_url 和 api_key
+            if (!runtimeModelConfig.value.base_url) {
+              runtimeModelConfig.value.base_url = data.config.base_url || '';
+            }
+          }
+        }
+      } catch (error) {
+        console.error('获取模型配置失败:', error);
+      }
+    };
+
     return {
       // 登录相关状态
       isLoggedIn,
@@ -1321,6 +1621,10 @@ const handleServiceStation = () => {
       showUserInfo,
       toggleUserInfo,
       avatarContainerRef,
+      avatarInput,
+      userAvatar,
+      triggerAvatarUpload,
+      handleAvatarUpload,
       handleLogin,
       handleLogout,
       goToLogin,
@@ -1331,6 +1635,12 @@ const handleServiceStation = () => {
       answerText,
       processContent,
       isProcessing,
+      uploadedFiles,
+      handleFileUpload,
+      removeFile,
+      downloadFile,
+      inputTextarea,
+      autoResize,
       handleSend,
       handleCancel,
       renderMarkdown,
@@ -1348,6 +1658,10 @@ const handleServiceStation = () => {
       runtimeModelConfig,
       switchArchitecture,
       clearModelConfig,
+      showArchMenu,
+      archMenuPosition,
+      archSelectorRef,
+      toggleArchMenu,
       handleKnowledgeBase,
       handleNetworkSearch,
       handleServiceStation,
@@ -1476,6 +1790,51 @@ const handleServiceStation = () => {
   min-height: 0;
 }
 
+.sidebar-wrapper {
+  position: relative;
+  transition: width 0.3s ease;
+}
+
+.sidebar-content {
+  width: 60px;
+  transition: width 0.3s ease;
+  overflow: hidden;
+}
+
+.sidebar-content.expanded {
+  width: 280px;
+}
+
+/* 收起时只显示按钮 */
+.sidebar-content:not(.expanded) .its-logo-flat {
+  display: none;
+}
+
+.sidebar-content:not(.expanded) .app-branding {
+  justify-content: center;
+  padding: 20px 0;
+}
+
+.toggle-sidebar-btn {
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  color: #6b7280;
+}
+
+.toggle-sidebar-btn:hover {
+  background: #e5e7eb;
+  color: #0ea5e9;
+  transform: scale(1.05);
+}
+
 .sidebar-main {
   display: flex;
   flex-direction: column;
@@ -1488,6 +1847,17 @@ const handleServiceStation = () => {
   min-height: 0;
   overflow-y: auto;
   padding: 10px;
+}
+
+.sessions-list-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.sessions-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #374151;
 }
 
 
@@ -1632,6 +2002,74 @@ const handleServiceStation = () => {
   font-size: 12px;
   color: #1f2937;
   font-weight: 600;
+}
+
+/* 用户头像固定在右上角 */
+.user-avatar-container-fixed {
+  position: fixed;
+  top: 20px;
+  right: 30px;
+  z-index: 1000;
+  cursor: pointer;
+}
+
+.user-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid #e0e0e0;
+  transition: all 0.3s ease;
+  cursor: pointer;
+}
+
+.user-avatar:hover {
+  border-color: #0ea5e9;
+  transform: scale(1.05);
+  box-shadow: 0 4px 12px rgba(14, 165, 233, 0.3);
+}
+
+.user-info-dropdown {
+  position: absolute;
+  top: 50px;
+  right: 0;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  padding: 12px;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 1001;
+}
+
+.user-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2937;
+  padding: 8px 12px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.upload-avatar-btn {
+  width: 100%;
+  justify-content: flex-start;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: #4b5563;
+  transition: background-color 0.2s;
+}
+
+.upload-avatar-btn:hover {
+  background-color: #f3f4f6;
 }
 
 /* 用户信息和登出按钮 */

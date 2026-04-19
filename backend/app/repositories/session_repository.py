@@ -1,4 +1,6 @@
+import asyncio
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -32,6 +34,18 @@ class SessionRepository:
         # 确保存储根目录存在
         self._storage_root.mkdir(parents=True, exist_ok=True)
 
+        # 每个 session 一把锁，防止多请求并发写同一文件丢失数据
+        self._locks: dict[str, asyncio.Lock] = {}
+        self._locks_lock = asyncio.Lock()
+
+    async def _get_session_lock(self, user_id: str, session_id: str) -> asyncio.Lock:
+        """获取指定会话的锁（惰性创建）。"""
+        key = f"{user_id}/{session_id}"
+        async with self._locks_lock:
+            if key not in self._locks:
+                self._locks[key] = asyncio.Lock()
+            return self._locks[key]
+
 
     def load_session(
             self, user_id: str, session_id: str
@@ -57,24 +71,31 @@ class SessionRepository:
         with file_path.open("r", encoding="utf-8") as f:
             return json.load(f)
 
-    def save_session(
+    async def save_session(
             self, user_id: str, session_id: str, data: List[Dict[str, Any]]
     ) -> None:
-        """保存会话数据到文件。
+        """保存会话数据到文件（原子写入 + 会话锁）。
 
         Args:
             user_id: 用户ID。
             session_id: 会话ID。
             data: 要保存的数据列表。
         """
-        file_path = self._get_file_path(user_id, session_id)
+        lock = await self._get_session_lock(user_id, session_id)
+        async with lock:
+            file_path = self._get_file_path(user_id, session_id)
 
-        # 确保用户的个人目录存在 (懒加载模式)
-        if not file_path.parent.exists():
-            file_path.parent.mkdir(parents=True, exist_ok=True)
+            # 确保用户的个人目录存在 (懒加载模式)
+            if not file_path.parent.exists():
+                file_path.parent.mkdir(parents=True, exist_ok=True)
 
-        with file_path.open("w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+            # 原子写入：先写临时文件，再 rename（Windows 下用 replace）
+            tmp_path = file_path.with_suffix(".tmp")
+            with tmp_path.open("w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+
+            # Windows 兼容：os.replace 既能 replace 文件，也能处理跨盘符
+            os.replace(str(tmp_path), str(file_path))
 
     def get_all_sessions_metadata(
             self, user_id: str

@@ -21,7 +21,7 @@ TOOL_NAME_MAPPING = {
 
     # 新架构：Agent Tools
     "consult_technical_expert": "咨询技术专家",
-    "query_service_station_and_navigate": "服务站与地理位置专家",
+    "query_service_station_and_navigate": "野外后勤导航专家",
 
     # LangGraph 架构工具
     "knowledge_base_tool": "查询知识库",

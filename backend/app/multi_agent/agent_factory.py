@@ -3,11 +3,7 @@ from agents.run import RunConfig
 
 from multi_agent.technical_agent import technical_agent
 from multi_agent.service_agent import comprehensive_service_agent
-from infrastructure.tools.mcp.mcp_servers import search_mcp_client, baidu_mcp_client
-from infrastructure.tools.mcp.mcp_manager import mcp_connect, mcp_cleanup
-
 from infrastructure.logging.logger import logger
-from infrastructure.tools.local.knowledge_base import query_knowledge
 
 
 # 1. 定义技术专家智能体工具
@@ -16,48 +12,34 @@ async def consult_technical_expert(
         query: str,
 ) -> str:
     """
-    【咨询与技术专家】处理技术咨询、设备故障、维修建议以及实时资讯（如股价、新闻、天气）。
+    【咨询技术专家】处理地质专业知识、技术咨询以及实时资讯（如天气、新闻、地震速报）。
     当用户询问：
-    1. "怎么修"、"为什么坏了"、"如何操作"等技术问题。
-    2. "今天股价"、"现在天气"等实时信息。
+    1. 地质专业问题："岩石鉴定"、"矿物识别"、"地层划分"、"构造分析"等。
+    2. 实时信息："今天天气"、"地震速报"、"最新科研成果"等。
     请调用此工具。
 
     Args:
-    query: 用户的原始问题或完整指令。
+        query: 用户的原始问题或完整指令。
     """
     try:
         logger.info(f"[Route] 转交技术专家: {query[:30]}...")
 
-        # 稳态优先：先直连知识库，避免Agent工具链在当前环境下出现无输出/取消问题
-        kb_result = await query_knowledge(question=query)
-        if isinstance(kb_result, dict):
-            kb_answer = str(kb_result.get("answer", "")).strip()
-            if kb_answer:
-                return kb_answer
-
-            kb_err = str(kb_result.get("error_msg", "")).strip()
-            if kb_err:
-                # 对地质知识问题，不再回退到技术专家Agent，直接返回清晰错误，避免兜圈子/空回复
-                if any(keyword in query for keyword in ["岩石", "矿物", "地层", "构造", "鉴定", "地质"]):
-                    return f"知识库暂时不可用，请稍后重试。详细原因：{kb_err}"
-                logger.warning(f"知识库直连失败，回退技术专家Agent: {kb_err}")
-
-        # 仅对非知识库类问题回退到技术专家Agent（可覆盖实时资讯等场景）
-        await mcp_connect()
+        # 直接委托给 technical_agent，让它自己决定使用知识库还是联网搜索
+        # technical_agent 现在同时拥有 query_knowledge_tool 和 web_search_tool
         result = await Runner.run(
             technical_agent,
             input=query,
             run_config=RunConfig(tracing_disabled=True)
         )
+
         output = result.final_output
         if output is None:
             return "技术专家已执行，但未返回可展示文本。"
         output = str(output).strip()
         return output or "技术专家已执行，但返回内容为空。"
     except Exception as e:
+        logger.error(f"技术专家执行异常: {e}")
         return f"技术专家暂时无法回答: {str(e)}"
-    finally:
-        await mcp_cleanup()
 
 
 # 2. 定义全能业务智能体工具
@@ -66,7 +48,7 @@ async def query_service_station_and_navigate(
         query: str,
 ) -> str:
     """
-        【服务站专家】处理线下服务站查询、位置查找和地图导航需求。
+        【野外后勤导航专家】处理线下服务站查询、位置查找和地图导航需求。
         当用户询问：
         1. "附近的维修点"、"找小米之家"（服务站查询）。
         2. "怎么去XX"、"导航到XX"（路径规划）。
@@ -77,7 +59,7 @@ async def query_service_station_and_navigate(
     """
     try:
         logger.info(f"[Route] 转交业务专家: {query[:30]}...")
-        await mcp_connect()
+        # 注意：MCP 连接已在 agent_service.py 请求入口通过 MCPSessionManager 统一建立
         result = await Runner.run(
             comprehensive_service_agent,
             input=query,
@@ -86,8 +68,6 @@ async def query_service_station_and_navigate(
         return result.final_output
     except Exception as e:
         return f"业务专家暂时无法回答: {str(e)}"
-    finally:
-        await mcp_cleanup()
 
 
 # 3. 将两个工具暴露出去

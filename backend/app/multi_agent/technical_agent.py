@@ -1,6 +1,7 @@
 from infrastructure.ai.prompt_loader import load_prompt
 from infrastructure.ai.openai_client import sub_model
-from infrastructure.tools.local.knowledge_base import query_knowledge
+from infrastructure.tools.local.knowledge_base import query_knowledge_tool
+from infrastructure.tools.mcp.web_search_tool import web_search_tool
 from infrastructure.tools.mcp.mcp_servers import search_mcp_client
 from agents import Agent, ModelSettings
 from agents import Runner,RunConfig
@@ -12,7 +13,7 @@ technical_agent = Agent(
     instructions=load_prompt("technical_agent"),
     model=sub_model,
     model_settings=ModelSettings(temperature=0),  # 不要发挥内容(软件层面限制模型的发挥)
-    tools=[query_knowledge],
+    tools=[query_knowledge_tool, web_search_tool],
     mcp_servers=[search_mcp_client],
 )
 

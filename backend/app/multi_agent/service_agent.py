@@ -18,7 +18,7 @@ from infrastructure.tools.mcp.mcp_servers import (
 from infrastructure.ai.prompt_loader import load_prompt
 
 comprehensive_service_agent = Agent(
-    name="野外后勤导航智能体",
+    name="野外后勤导航专家",
     instructions=load_prompt("comprehensive_service_agent"),
     model=sub_model,
     model_settings=ModelSettings(
