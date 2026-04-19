@@ -89,11 +89,6 @@ npm run dev
 
 > **注意**：知识库服务（8001）必须先启动，主智能体服务（8000）依赖它进行 RAG 检索。
 
-### 一键启动（Windows PowerShell）
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\start-dev-terminals.ps1
-```
 
 ---
 
@@ -176,6 +171,56 @@ powershell -ExecutionPolicy Bypass -File .\start-dev-terminals.ps1
 2. **知识库先行**：必须先启动知识库服务（8001），再启动主智能体服务（8000）
 3. **模型选择**：推荐使用 Qwen3 系列模型（硅基流动 `Qwen/Qwen3-32B` 或 阿里百炼 `qwen3-max`）
 4. **MySQL 数据**：站点查询功能依赖 MySQL 数据库，需提前导入站点数据
+
+---
+
+## 后续改进方向
+
+> 详细的改进规划见 [项目改进规划.md](项目改进规划.md)
+
+### P0：记忆系统改造（引入 mem0）
+
+当前记忆系统仅保留最近 3 轮对话，缺乏跨会话的语义记忆。计划引入 [mem0](https://github.com/mem0ai/mem0) 实现三级记忆：
+
+- **短期记忆**：当前会话完整上下文
+- **长期记忆**：用户偏好、常去地质区域、历史经验
+- **语义记忆**：从对话中自动提取的地质事实
+
+改造集中在 `SessionService` 的 `prepare_history`（注入长期记忆到 context）和 `save_history`（自动提取事实）两个方法。
+
+### P0：容器化部署
+
+规划 `Dockerfile` + `docker-compose.yml`，包含前端、双后端服务、Redis（用于 LangGraph 状态持久化和短期记忆缓存）。
+
+### P0：安全加固
+
+- JWT 认证替代前端硬编码密码
+- API 错误信息脱敏
+- Rate Limiting 限制请求频率
+
+### P1：系统韧性
+
+- 细粒度重试（tenacity 指数退避）替代粗粒度全链路重试
+- 熔断器（pybreaker）防止下游服务挂掉时的级联失败
+- 整体超时控制（asyncio.wait_for）
+
+### P1：性能优化
+
+- MCP 长连接池复用（当前每次请求 connect/cleanup 增加 2-3s 延迟）
+- httpx 连接池替代每次新建 AsyncClient
+- LangGraph 图编译结果缓存
+
+### P1：可观测性
+
+- 结构化日志（JSON 格式）
+- `/health` 健康检查端点
+- 请求指标采集（延迟、token 消耗、工具调用频率）
+
+### P2：测试与代码质量
+
+- 建立 pytest 测试框架，覆盖核心服务层
+- 工具定义统一化（当前 OpenAI Agents SDK 和 LangGraph 各定义一遍）
+- 测试代码从业务文件剥离到独立 `tests/` 目录
 
 ---
 

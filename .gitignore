@@ -50,6 +50,9 @@ backend手敲/
 .claude/
 CLAUDE.md
 
+# Internal planning docs
+项目改进规划.md
+
 # User memory sessions (personal data)
 backend/app/user_memories/
 
