@@ -11,3 +11,7 @@ def load_technical_prompt() -> str:
 
 def load_service_prompt() -> str:
     return load_prompt("comprehensive_service_agent")
+
+
+def load_autopilot_prompt() -> str:
+    return load_prompt("autopilot_agent")

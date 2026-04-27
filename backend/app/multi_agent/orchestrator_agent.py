@@ -19,6 +19,8 @@ orchestrator_agent = Agent(
     model=sub_model,      # 通用模型（已干活为主 推理可能有或者都没有）
     model_settings=ModelSettings(
         temperature=0,
+        # 禁用 Qwen3 的深度思考模式，避免所有输出都走 reasoning 通道导致 ANSWER 为空
+        extra_body={"enable_thinking": False},
     ),
     # 直接使用Agent Tools
     tools=AGENT_TOOLS,

@@ -1,8 +1,11 @@
+import asyncio
+import logging
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from .routers import router
+from .auth_router import router as auth_router
 from infrastructure.logging.logger import logger
 from infrastructure.tools.mcp.mcp_manager import mcp_connect, mcp_cleanup
 
@@ -23,13 +26,19 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"MCP连接建立失败: {str(e)}")
 
-    yield  # 应用运行期间（先别释放mcp链接 去处理请求...）
+    try:
+        yield  # 应用运行期间（先别释放mcp链接 去处理请求...）
+    except asyncio.CancelledError:
+        # 客户端断开连接时，ASGI lifespan可能被取消，这是正常行为
+        pass
 
     # 应用关闭时执行
     logger.info("应用关闭，清理MCP连接...")
     try:
         await mcp_cleanup()
         logger.info("MCP连接清理完成")
+    except asyncio.CancelledError:
+        pass
     except Exception as e:
         logger.error(f"MCP连接清理失败: {str(e)}")
 
@@ -50,6 +59,7 @@ def create_fast_api() -> FastAPI:
 
     # 3. 注册各种路由
     app.include_router(router=router)
+    app.include_router(router=auth_router)
 
     # 4.返回创建的FastAPI
     return app
@@ -57,8 +67,24 @@ def create_fast_api() -> FastAPI:
 
 if __name__ == '__main__':
     print("1.准备启动Web服务器")
+
+    # 配置 uvicorn 日志：抑制 CancelledError 噪音
+    for uv_logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        _uvlog = logging.getLogger(uv_logger_name)
+        _uvlog.handlers.clear()
+        _h = logging.StreamHandler()
+        _h.setFormatter(uvicorn.logging.DefaultFormatter("%(levelprefix)s %(message)s"))
+        _uvlog.addHandler(_h)
+        _uvlog.setLevel(logging.INFO)
+        _uvlog.addFilter(lambda r: not ("CancelledError" in r.getMessage() or "cancel scope" in r.getMessage() or " Cancelled " in r.getMessage()))
+
     try:
-        uvicorn.run(app=create_fast_api(), host="127.0.0.1", port=8000)
+        uvicorn.run(
+            app=create_fast_api(),
+            host="127.0.0.1",
+            port=8000,
+            log_config=None,  # 禁用 uvicorn 默认日志配置，使用上面的自定义配置
+        )
 
         logger.info("2.启动Web服务器成功...")
 

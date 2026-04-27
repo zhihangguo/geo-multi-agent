@@ -27,8 +27,22 @@ class Settings(BaseSettings):
     CHUNK_OVERLAP: int = 200
 
     # Retrieval configuration
-    TOP_ROUGH: int = 50
-    TOP_FINAL: int = 5
+    TOP_ROUGH: int = 50       # 粗排返回数量（标题检索用）
+    TOP_RECALL: int = 30      # 每路召回数量（Phase 2：多路召回）
+    TOP_RERANK: int = 20      # 送入 Re-ranker 的候选数量（Phase 3 用）
+    TOP_FINAL: int = 10       # 最终返回给 LLM 的文档数（Phase 4 动态阈值前最大限制）
+
+    # Re-ranker model configuration（Phase 3）
+    RERANKER_MODEL: str = "BAAI/bge-reranker-v2-m3"
+
+    # Dynamic threshold configuration（Phase 4）
+    RERANK_THRESHOLD: float = 0.5   # Re-ranker 相关性阈值
+    MIN_RETURN: int = 1             # 最少返回文档数（保底）
+    MAX_RETURN: int = 10            # 最多返回文档数
+
+    # Image multimodal configuration（Phase 5）
+    ENABLE_IMAGE_DESCRIPTION: bool = True
+    IMAGE_DESCRIPTION_MODEL: str = "Qwen/Qwen2.5-VL-72B-Instruct"
 
     model_config = SettingsConfigDict(
         env_file=os.path.join(_project_root, ".env"),

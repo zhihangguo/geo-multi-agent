@@ -10,3 +10,7 @@ pystun3
 langgraph
 langchain-openai
 langchain-core
+mem0ai
+bcrypt
+cachetools
+chromadb

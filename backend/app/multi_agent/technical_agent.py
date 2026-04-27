@@ -12,7 +12,10 @@ technical_agent = Agent(
     name="地质知识专家",
     instructions=load_prompt("technical_agent"),
     model=sub_model,
-    model_settings=ModelSettings(temperature=0),  # 不要发挥内容(软件层面限制模型的发挥)
+    model_settings=ModelSettings(
+        temperature=0,
+        extra_body={"enable_thinking": False},
+    ),
     tools=[query_knowledge_tool, web_search_tool],
     mcp_servers=[search_mcp_client],
 )

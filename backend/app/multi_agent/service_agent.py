@@ -17,22 +17,31 @@ from infrastructure.tools.mcp.mcp_servers import (
 )
 from infrastructure.ai.prompt_loader import load_prompt
 
+# 导入带格式化的百度导航工具（解决原始 MCP 返回大量重复路段的问题）
+from infrastructure.tools.baidu_navigation import (
+    baidu_directions,
+    baidu_geocode,
+    baidu_map_uri,
+)
+
 comprehensive_service_agent = Agent(
     name="野外后勤导航专家",
     instructions=load_prompt("comprehensive_service_agent"),
     model=sub_model,
     model_settings=ModelSettings(
         temperature=0,
-        max_tokens=2048,
+        max_tokens=4096,
+        extra_body={"enable_thinking": False},
     ),
-    # 本地工具：查询附近站点（村庄/医疗站/补给点）
+    # 本地工具 + 带格式化的百度导航工具
+    # 注意：不再直接注册 baidu_mcp_client，改用 Python 封装的导航工具
+    # 这样可以在 Python 层对路线步骤进行去重和格式化
     tools=[
         resolve_user_location_from_text,
         query_nearest_repair_shops_by_coords,
-    ],
-    # 远程MCP工具：地图导航
-    mcp_servers=[
-        baidu_mcp_client
+        baidu_directions,     # 【核心】路线规划，自动格式化输出
+        baidu_geocode,        # 地址转坐标
+        baidu_map_uri,        # 生成导航链接
     ],
 )
 

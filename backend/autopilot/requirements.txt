@@ -1,0 +1,10 @@
+# 自动驾驶评估微服务依赖
+fastapi
+uvicorn
+pydantic-settings
+pymysql
+dbutils
+openai
+chromadb
+cachetools
+httpx

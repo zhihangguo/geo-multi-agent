@@ -2,13 +2,11 @@ import os.path
 import logging
 import aiofiles
 import shutil
-import time
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import JSONResponse
 from services.ingestion.ingestion_processor import IngestionProcessor
 from schemas.schema import UploadResponse, QueryResponse, QueryRequest
 from services.retrieval_service import RetrievalService
@@ -25,20 +23,16 @@ retrieval_service = RetrievalService()
 query_service = QueryService()
 
 
-# 获取知识库服务的模型配置
-@router.get("/api/model_config", summary="获取知识库模型配置")
+@router.get("/api/model_config", summary="Get model config")
 async def get_model_config():
-    """
-    返回知识库服务使用的模型配置
-    """
-    return JSONResponse({
+    """Return the knowledge service model configuration used by the main app."""
+    return {
         "success": True,
-        "config": {
-            "model": settings.MODEL,
-            "embedding_model": settings.EMBEDDING_MODEL,
-            "base_url": settings.BASE_URL,
-        }
-    })
+        "embedding_model": settings.EMBEDDING_MODEL,
+        "chat_model": settings.MODEL,
+        "base_url": settings.BASE_URL,
+        "vector_store_path": settings.VECTOR_STORE_PATH,
+    }
 
 
 # IO(对文件读写) 执行SQL 网络请求 典型耗时任务
@@ -101,12 +95,6 @@ async def query(request: QueryRequest):
         QueryResponse： 模型的结果以及原始问题
 
     """
-    request_start = time.perf_counter()
-    retrieval_start = None
-    retrieval_end = None
-    llm_start = None
-    llm_end = None
-
     try:
         # 1. 判断用户问题
         user_question = request.question
@@ -114,22 +102,10 @@ async def query(request: QueryRequest):
             raise HTTPException(status_code=500, detail="查询问题不存在")
 
         # 2. 调用检索器的检索方法
-        retrieval_start = time.perf_counter()
         retrieval_context = retrieval_service.retrieval(user_question)
-        retrieval_end = time.perf_counter()
 
         # 3. 调用查询器的查询方法
-        llm_start = time.perf_counter()
         answer = query_service.generate_answer(user_question, retrieval_context)
-        llm_end = time.perf_counter()
-
-        total_ms = (time.perf_counter() - request_start) * 1000
-        retrieval_ms = (retrieval_end - retrieval_start) * 1000 if retrieval_start and retrieval_end else -1
-        llm_ms = (llm_end - llm_start) * 1000 if llm_start and llm_end else -1
-        logger.info(
-            f"知识库查询耗时统计 | question={user_question[:30]}... | "
-            f"retrieval={retrieval_ms:.2f}ms | llm={llm_ms:.2f}ms | total={total_ms:.2f}ms"
-        )
 
         # 4. 封装到响应数据模型
         return QueryResponse(
@@ -137,11 +113,5 @@ async def query(request: QueryRequest):
             answer=answer
         )
     except Exception as e:
-        total_ms = (time.perf_counter() - request_start) * 1000
-        retrieval_ms = (retrieval_end - retrieval_start) * 1000 if retrieval_start and retrieval_end else -1
-        llm_ms = (llm_end - llm_start) * 1000 if llm_start and llm_end else -1
-        logger.error(
-            f"调用查询知识库服务失败:原因:{str(e)} | "
-            f"retrieval={retrieval_ms:.2f}ms | llm={llm_ms:.2f}ms | total={total_ms:.2f}ms"
-        )
+        logger.error(f"调用查询知识库服务失败:原因:{str(e)}")
         raise HTTPException(status_code=500,detail="服务内部出现异常")

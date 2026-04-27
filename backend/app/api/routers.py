@@ -4,8 +4,11 @@ from fastapi.routing import APIRouter
 from starlette.responses import StreamingResponse, JSONResponse
 
 from schemas.request import (
-    ChatMessageRequest, UserSessionsRequest, DeleteSessionRequest,
+    ChatMessageRequest, UserSessionsRequest, DeleteSessionRequest, CreateSessionRequest,
     HistoryRequest, ReplayRequest,
+    MemoryListRequest, MemoryGetRequest, MemoryDeleteRequest,
+    MemoryUpdateRequest, MemoryDeleteAllRequest, MemoryCleanupRequest, MemoryPromoteSessionRequest,
+    SessionMessagesRequest, DeleteSessionMessageRequest,
 )
 from services.agent_service import MultiAgentService
 from infrastructure.logging.logger import logger
@@ -60,6 +63,28 @@ async def get_model_config():
         return JSONResponse({
             "success": False,
             "error": str(e)
+        })
+
+
+# 记忆模式状态检查
+@router.get("/api/memory_status", summary="获取记忆模式可用状态")
+async def get_memory_status():
+    """
+    返回 mem0 记忆引擎的可用性状态。
+    前端据此决定是否可以切换到 AI 记忆模式。
+    """
+    try:
+        from services.memory.mem0_memory import mem0_memory
+        status = mem0_memory.get_status()
+        return JSONResponse({
+            "success": True,
+            "mem0": status,
+        })
+    except Exception as e:
+        logger.error(f"获取记忆状态失败: {e}")
+        return JSONResponse({
+            "success": True,
+            "mem0": {"available": False, "message": f"状态检查异常: {str(e)}"},
         })
 
 
@@ -210,6 +235,92 @@ def delete_user_session(request: DeleteSessionRequest):
         "session_id": request.session_id,
         "message": "删除成功" if deleted else "会话不存在或删除失败"
     }
+
+
+@router.post("/api/create_session")
+def create_user_session(request: CreateSessionRequest):
+    """创建新会话（在后端创建空会话文件，确保刷新后仍存在）。"""
+    logger.info(f"[创建会话] user={request.user_id}, session={request.session_id}")
+    try:
+        import asyncio
+        # 创建空会话文件（包含一个初始 system 消息）
+        initial_data = [{"role": "system", "content": f"你是一个有记忆的智能体助手，请基于上下文历史会话用户问题 (会话ID {request.session_id})"}]
+        loop = asyncio.new_event_loop()
+        loop.run_until_complete(
+            session_service.save_history(request.user_id, request.session_id, initial_data, memory_mode="file")
+        )
+        loop.close()
+        return {
+            "success": True,
+            "user_id": request.user_id,
+            "session_id": request.session_id,
+        }
+    except Exception as e:
+        logger.error(f"创建会话失败: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+        }
+
+
+@router.post("/api/session_messages")
+def get_session_messages(request: SessionMessagesRequest):
+    """获取指定会话的所有消息（用于会话记忆面板展示）。"""
+    logger.info(f"[会话记忆] user={request.user_id}, session={request.session_id}")
+    try:
+        from repositories.session_repository import session_repository
+        target_session_id = request.session_id or session_service.DEFAULT_SESSION_ID
+        messages = session_repository.load_session(request.user_id, target_session_id)
+        if messages is None:
+            messages = []
+        # 过滤掉 process 角色
+        messages = [m for m in messages if m.get("role") != "process"]
+        return {
+            "success": True,
+            "user_id": request.user_id,
+            "session_id": request.session_id,
+            "total": len(messages),
+            "messages": messages,
+        }
+    except Exception as e:
+        logger.error(f"获取会话消息失败: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+        }
+
+
+@router.post("/api/delete_session_message")
+def delete_session_message(request: DeleteSessionMessageRequest):
+    """删除会话中的单条消息（用于会话记忆面板逐条删除）。"""
+    logger.info(f"[会话记忆] user={request.user_id} 删除消息 index={request.message_index}, session={request.session_id}")
+    try:
+        from repositories.session_repository import session_repository
+        target_session_id = request.session_id or session_service.DEFAULT_SESSION_ID
+        messages = session_repository.load_session(request.user_id, target_session_id)
+        if messages is None:
+            return {"success": False, "error": "会话不存在"}
+        idx = request.message_index
+        if idx < 0 or idx >= len(messages):
+            return {"success": False, "error": f"索引 {idx} 越界，共 {len(messages)} 条消息"}
+        deleted_msg = messages.pop(idx)
+        import asyncio
+        loop = asyncio.new_event_loop()
+        loop.run_until_complete(
+            session_repository.save_session(request.user_id, target_session_id, messages)
+        )
+        loop.close()
+        return {
+            "success": True,
+            "deleted_role": deleted_msg.get("role"),
+            "deleted_content": deleted_msg.get("content", "")[:50],
+        }
+    except Exception as e:
+        logger.error(f"删除会话消息失败: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+        }
 
 
 # ============================================================================
@@ -363,5 +474,207 @@ def resume_execution(request: ReplayRequest):
         return {
             "success": False,
             "thread_id": thread_id,
+            "error": str(e),
+        }
+
+
+# ============================================================================
+# Mem0 记忆管理 API
+# ============================================================================
+
+@router.post("/api/memories/list")
+async def list_user_memories(request: MemoryListRequest):
+    """获取用户的 AI 记忆条目（支持按会话过滤）。"""
+    try:
+        from services.memory.mem0_memory import mem0_memory
+        memories = await asyncio.wait_for(
+            asyncio.to_thread(
+                mem0_memory.get_all_memories,
+                request.user_id,
+                request.session_id,
+                request.top_k,
+            ),
+            timeout=15,
+        )
+        return {
+            "success": True,
+            "user_id": request.user_id,
+            "session_id": request.session_id,
+            "total": len(memories),
+            "memories": memories,
+        }
+    except asyncio.TimeoutError:
+        logger.error("memory list timeout")
+        return {
+            "success": False,
+            "error": "memory list timeout: mem0/Chroma may be writing or locked by another process",
+            "memories": [],
+            "total": 0,
+        }
+    except Exception as e:
+        logger.error(f"memory list failed: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "memories": [],
+            "total": 0,
+        }
+
+
+@router.post("/api/memories/refining_status")
+async def get_memory_refining_status(request: MemoryListRequest):
+    """检查指定用户是否有正在进行的记忆精炼任务。"""
+    try:
+        memory_mode = request.memory_mode or "file"
+        is_refining = False
+
+        if memory_mode == "mem0":
+            from services.memory.mem0_memory import mem0_memory
+            is_refining = mem0_memory.is_refining(request.user_id)
+        else:
+            from services.memory.file_memory import file_memory
+            is_refining = file_memory.is_refining(request.user_id)
+
+        return {
+            "success": True,
+            "user_id": request.user_id,
+            "is_refining": is_refining,
+        }
+    except Exception as e:
+        logger.error(f"获取记忆精炼状态失败: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "is_refining": False,
+        }
+
+
+@router.post("/api/memories/get")
+def get_memory_detail(request: MemoryGetRequest):
+    """获取单条记忆的详情。"""
+    try:
+        from services.memory.mem0_memory import mem0_memory
+        memory = mem0_memory.get_memory(request.memory_id, request.user_id)
+        if memory:
+            return {
+                "success": True,
+                "memory": memory,
+            }
+        return {
+            "success": False,
+            "error": "记忆不存在",
+        }
+    except Exception as e:
+        logger.error(f"获取记忆详情失败: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+        }
+
+
+@router.post("/api/memories/delete")
+def delete_single_memory(request: MemoryDeleteRequest):
+    """删除单条记忆。"""
+    logger.info(f"[记忆管理] 用户 {request.user_id} 删除记忆 {request.memory_id[:8]}...")
+    try:
+        from services.memory.mem0_memory import mem0_memory
+        deleted = mem0_memory.delete_memory(request.user_id, request.memory_id)
+        return {
+            "success": deleted,
+            "message": "删除成功" if deleted else "删除失败",
+        }
+    except Exception as e:
+        logger.error(f"删除记忆失败: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+        }
+
+
+@router.post("/api/memories/update")
+def update_single_memory(request: MemoryUpdateRequest):
+    """更新单条记忆的内容。"""
+    logger.info(f"[记忆管理] 用户 {request.user_id} 更新记忆 {request.memory_id[:8]}...")
+    try:
+        from services.memory.mem0_memory import mem0_memory
+        updated = mem0_memory.update_memory(request.user_id, request.memory_id, request.new_text)
+        return {
+            "success": updated,
+            "message": "更新成功" if updated else "更新失败",
+        }
+    except Exception as e:
+        logger.error(f"更新记忆失败: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+        }
+
+
+@router.post("/api/memories/delete_all")
+def delete_all_user_memories(request: MemoryDeleteAllRequest):
+    """清空用户的 AI 记忆（支持按会话清空）。"""
+    logger.info(f"[记忆管理] 用户 {request.user_id} 清空记忆, session={request.session_id}")
+    try:
+        from services.memory.mem0_memory import mem0_memory
+        deleted_count = mem0_memory.delete_all_memories(request.user_id, request.session_id)
+        return {
+            "success": True,
+            "deleted_count": deleted_count,
+            "message": f"已删除 {deleted_count} 条记忆",
+        }
+    except Exception as e:
+        logger.error(f"清空记忆失败: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+        }
+
+
+@router.post("/api/memories/promote_session")
+async def promote_session_memory(request: MemoryPromoteSessionRequest):
+    """Promote a selected session transcript into global mem0 memory."""
+    logger.info(
+        f"[memory promote] user={request.user_id}, session={request.session_id}, "
+        f"include_assistant={request.include_assistant}"
+    )
+    try:
+        from services.memory.mem0_memory import mem0_memory
+        result = await mem0_memory.promote_session_to_global(
+            request.user_id,
+            request.session_id,
+            include_assistant=request.include_assistant,
+            max_messages=request.max_messages,
+        )
+        return {
+            "success": not result.get("error"),
+            **result,
+        }
+    except Exception as e:
+        logger.error(f"promote session memory failed: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+        }
+
+
+@router.post("/api/memories/cleanup")
+def cleanup_expired_memories(request: MemoryCleanupRequest):
+    """清理过期记忆（超过指定天数或超出数量上限）。"""
+    logger.info(f"[记忆管理] 用户 {request.user_id} 清理过期记忆")
+    try:
+        from services.memory.mem0_memory import mem0_memory
+        result = mem0_memory.cleanup_expired_memories(
+            request.user_id,
+            request.max_age_days,
+            request.max_count,
+        )
+        return {
+            "success": True,
+            **result,
+        }
+    except Exception as e:
+        logger.error(f"清理记忆失败: {e}")
+        return {
+            "success": False,
             "error": str(e),
         }

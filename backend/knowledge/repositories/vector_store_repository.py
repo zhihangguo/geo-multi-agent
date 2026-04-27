@@ -1,6 +1,12 @@
 # 1. 优先import
 
-import  logging
+import os
+# 禁用 Chroma 遥测（必须在 import Chroma 之前设置）
+os.environ["ANONYMIZED_TELEMETRY"] = "false"
+
+import logging
+import hashlib
+
 logging.basicConfig(level=logging.INFO)
 logger=logging.getLogger(__name__)
 
@@ -43,7 +49,7 @@ class VectorStoreRepository:
 
     def  add_documents(self,documents:list,batch_size:int=16)->int:
         """
-        将切分之后的文档块保存到向量数据库中
+        将切分之后的文档块保存到向量数据库中（入库前按内容 MD5 去重）
 
         Args:
             documents: 切分之后的文档块
@@ -54,21 +60,32 @@ class VectorStoreRepository:
 
         """
 
-        # 1. 获取到文档块的总数量
-        total_documents_chunks=len(documents)
+        # 1. 按内容哈希去重：同一内容只保留第一次出现
+        seen_hashes = set()
+        unique_docs = []
+        for doc in documents:
+            content_hash = hashlib.md5(doc.page_content.encode('utf-8')).hexdigest()
+            if content_hash not in seen_hashes:
+                seen_hashes.add(content_hash)
+                unique_docs.append(doc)
 
-        # 2. 分批次保存
-        # 场景：documents:[1,2,3,4,5] batch_size:2 遍历3次 第一次取到[1,2]  第二次取到[3,4]    第三次取到[5]
-        documents_chunks_added=0
+        total_unique = len(unique_docs)
+        skipped = len(documents) - total_unique
+        if skipped > 0:
+            logger.info(f"[去重] 跳过 {skipped} 个重复文档块，剩余 {total_unique} 个待入库")
+
+        # 2. 分批次写入 Chroma
+        # 修复：原代码 for 循环内有 return，导致只写入第一批 16 个 chunk 就提前退出
+        documents_chunks_added = 0
         try:
-            for i in range(0,total_documents_chunks,batch_size):
-                bath=documents[i:batch_size+i]
-                self.vector_database.add_documents(bath)
-                documents_chunks_added=documents_chunks_added+len(bath)
-                logger.info(f"成功将文档块:{documents_chunks_added}/{total_documents_chunks}保存到向量数据库...")
-                return documents_chunks_added
+            for i in range(0, total_unique, batch_size):
+                batch = unique_docs[i:batch_size + i]
+                self.vector_database.add_documents(batch)
+                documents_chunks_added += len(batch)
+                logger.info(f"成功将文档块:{documents_chunks_added}/{total_unique}保存到向量数据库...")
+            return documents_chunks_added
         except Exception as e:
-            logger.error(f"文档块列表:{documents}保存到向量数据库失败: {str(e)}")
+            logger.error(f"文档块列表保存到向量数据库失败: {str(e)}")
             raise e
 
 

@@ -16,8 +16,8 @@ from .models import build_main_model
 
 class TaskItem(BaseModel):
     """单个任务描述"""
-    type: Literal["technical", "service"] = Field(
-        ..., description="任务类型: technical（地质知识/资讯）或 service（后勤导航）"
+    type: Literal["technical", "service", "autopilot"] = Field(
+        ..., description="任务类型: technical（地质知识/资讯）、service（后勤导航）、autopilot（自动驾驶数据评估）"
     )
     query: str = Field(
         ..., description="传给对应专家的具体查询内容"
@@ -46,11 +46,22 @@ SERVICE_KEYWORDS = [
     "路线", "位置", "撤离", "最近的", "怎么走",
 ]
 
+AUTOPILOT_KEYWORDS = [
+    "自动驾驶", "测试运行", "感知指标", "安全事件", "评估报告",
+    "驾驶日志", "test run", "感知精确率", "规划评分", "安全评分",
+    "AV-", "RUN-",
+]
+
 
 def _keyword_route(user_query: str) -> str | None:
     """基于关键词的兜底路由（仅对明确的单任务有效）。"""
     has_tech = any(k in user_query for k in TECHNICAL_KEYWORDS)
     has_svc = any(k in user_query for k in SERVICE_KEYWORDS)
+    has_auto = any(k in user_query for k in AUTOPILOT_KEYWORDS)
+
+    # 命中自动驾驶关键词 → autopilot
+    if has_auto and not has_tech and not has_svc:
+        return "autopilot"
 
     # 同时命中两类关键词 → 可能是多任务，交给 LLM
     if has_tech and has_svc:
@@ -75,6 +86,7 @@ PLANNER_SYSTEM_PROMPT = """你是 GeoAssist 的任务规划器。
 
 1. **technical** — 地质知识、岩石鉴定、矿物识别、地层分析、实时资讯（天气、地震、新闻）等
 2. **service** — 查询附近站点（补给/医疗/村庄）、路线导航、位置查询等
+3. **autopilot** — 自动驾驶测试数据查询、感知指标统计、安全事件分析、驾驶日志分析、评估报告生成等
 
 ## 规则
 
@@ -93,6 +105,12 @@ PLANNER_SYSTEM_PROMPT = """你是 GeoAssist 的任务规划器。
 
 用户: "帮我导航到最近的医疗站"
 → tasks: [{"type": "service", "query": "帮我导航到最近的医疗站"}]
+
+用户: "查询 AV-001 的所有测试记录"
+→ tasks: [{"type": "autopilot", "query": "查询 AV-001 的所有测试记录"}]
+
+用户: "生成 RUN-001 的评估报告"
+→ tasks: [{"type": "autopilot", "query": "生成 RUN-001 的评估报告"}]
 """
 
 

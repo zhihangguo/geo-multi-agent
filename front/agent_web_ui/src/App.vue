@@ -34,8 +34,11 @@
           登录
         </button>
         <div class="login-hint">
-          <p>体验账号：root1 / root2 / root3</p>
-          <p>初始口令：123456</p>
+          <p>体验账号：admin / 123456</p>
+        </div>
+        <div class="login-toggle">
+          <span>还没有账号？</span>
+          <a href="#" @click.prevent="showRegister = true">立即注册</a>
         </div>
         <div class="login-feature-section">
           <h2>GeoAssist Nova 能力速览</h2>
@@ -59,6 +62,35 @@
       </div>
     </div>
     
+    <!-- 注册表单覆盖层 -->
+        <div v-if="showRegister" class="register-overlay">
+          <div class="register-form">
+            <h2 class="register-title">注册新账号</h2>
+            <div class="login-input-group">
+              <label for="reg-username">用户名</label>
+              <input id="reg-username" v-model="regUsername" type="text" placeholder="至少2个字符" @keyup.enter="handleRegister" />
+            </div>
+            <div class="login-input-group">
+              <label for="reg-displayname">显示名称（可选）</label>
+              <input id="reg-displayname" v-model="regDisplayName" type="text" placeholder="显示名称" @keyup.enter="handleRegister" />
+            </div>
+            <div class="login-input-group">
+              <label for="reg-password">密码</label>
+              <input id="reg-password" v-model="regPassword" type="password" placeholder="至少6个字符" @keyup.enter="handleRegister" />
+            </div>
+            <div class="login-input-group">
+              <label for="reg-password-confirm">确认密码</label>
+              <input id="reg-password-confirm" v-model="regPasswordConfirm" type="password" placeholder="再次输入密码" @keyup.enter="handleRegister" />
+            </div>
+            <div v-if="registerError" class="login-error">{{ registerError }}</div>
+            <div v-if="registerSuccess" class="login-success">{{ registerSuccess }}</div>
+            <button class="login-button btn-primary" @click="handleRegister">注册</button>
+            <div class="login-toggle">
+              <span>已有账号？</span>
+              <a href="#" @click.prevent="showRegister = false">返回登录</a>
+            </div>
+          </div>
+        </div>
     <!-- 主界面（登录后显示） -->
     <template v-else>
       <!-- 移除header部分，将用户信息移到结果框右上角 -->
@@ -366,7 +398,7 @@
                               <polyline points="2 17 12 22 22 17"></polyline>
                               <polyline points="2 12 12 17 22 12"></polyline>
                             </svg>
-                            <span>{{ selectedArchitecture === 'agents' ? 'OpenAI Agent' : 'LangGraph' }}</span>
+                            <span>{{ selectedArchitecture === 'agents' ? 'OpenAI' : 'Graph' }}</span>
                             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                               <polyline points="6 9 12 15 18 9"></polyline>
                             </svg>
@@ -387,6 +419,88 @@
                                 <div class="arch-option-desc">状态图谱 · 精细控制</div>
                               </div>
                               <div v-if="selectedArchitecture === 'langgraph'" class="arch-option-check">✓</div>
+                            </div>
+                          </div>
+                        </div>
+
+                        <!-- 记忆模式选择器 - 下拉菜单 -->
+                        <div class="memory-selector" ref="memorySelectorRef">
+                          <button class="memory-trigger" @click="toggleMemoryMenu">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                            </svg>
+                            <span>{{ selectedMemoryMode === 'file' ? '本地' : 'mem0' }}</span>
+                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                              <polyline points="6 9 12 15 18 9"></polyline>
+                            </svg>
+                          </button>
+                          <div v-if="showMemoryMenu" class="memory-dropdown">
+                            <div class="memory-option" :class="{ active: selectedMemoryMode === 'file' }" @click="switchMemoryMode('file'); showMemoryMenu = false">
+                              <div class="memory-option-icon file-icon">F</div>
+                              <div class="memory-option-info">
+                                <div class="memory-option-name">本地记忆</div>
+                                <div class="memory-option-desc">JSON 文件 · 会话内短期记忆</div>
+                              </div>
+                              <div v-if="selectedMemoryMode === 'file'" class="memory-option-check">✓</div>
+                            </div>
+                            <div
+                              class="memory-option"
+                              :class="{ active: selectedMemoryMode === 'mem0', disabled: !mem0Available }"
+                              @click="mem0Available ? (switchMemoryMode('mem0'), showMemoryMenu = false) : null"
+                            >
+                              <div class="memory-option-icon mem0-icon">M</div>
+                              <div class="memory-option-info">
+                                <div class="memory-option-name">AI 记忆 (mem0)</div>
+                                <div class="memory-option-desc" v-if="mem0Available">向量存储 · 跨会话长期+语义记忆</div>
+                                <div class="memory-option-desc error" v-else>{{ mem0StatusMessage }}</div>
+                              </div>
+                              <div v-if="selectedMemoryMode === 'mem0' && mem0Available" class="memory-option-check">✓</div>
+                            </div>
+                          </div>
+                        </div>
+
+                        <!-- 记忆管理按钮 + 范围选择 -->
+                        <div class="memory-mgmt-wrapper" ref="memoryMgmtRef">
+                          <button class="memory-mgmt-btn" @click.stop="toggleScopeMenu" title="切换记忆范围">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                              <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+                              <path d="M2 17l10 5 10-5"></path>
+                              <path d="M2 12l10 5 10-5"></path>
+                            </svg>
+                            <span>记忆</span>
+                            <span v-if="memoryCount > 0" class="memory-badge">{{ memoryCount }}</span>
+                            <span :class="['scope-indicator', memoryScope]">
+                              {{ memoryScope === 'global' ? '全局' : '会话' }}
+                            </span>
+                            <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="scope-chevron">
+                              <polyline points="6 9 12 15 18 9"></polyline>
+                            </svg>
+                          </button>
+                          <!-- 记忆范围切换下拉 -->
+                          <div v-if="showScopeMenu" class="scope-dropdown">
+                            <div class="scope-section-title">记忆范围</div>
+                            <div
+                              :class="['scope-option', { active: memoryScope === 'global' }]"
+                              @click="switchMemoryScope('global'); showScopeMenu = false"
+                            >
+                              <span class="scope-icon">🧠</span>
+                              <span class="scope-name">全局记忆</span>
+                              <span class="scope-desc">跨会话共享</span>
+                              <span v-if="memoryScope === 'global'" class="scope-check">✓</span>
+                            </div>
+                            <div
+                              :class="['scope-option', { active: memoryScope === 'session' }]"
+                              @click="switchMemoryScope('session'); showScopeMenu = false"
+                            >
+                              <span class="scope-icon">🔒</span>
+                              <span class="scope-name">会话记忆</span>
+                              <span class="scope-desc">仅当前会话</span>
+                              <span v-if="memoryScope === 'session'" class="scope-check">✓</span>
+                            </div>
+                            <div class="scope-divider"></div>
+                            <div class="scope-option view-memories" @click="openMemoryPanel(); showScopeMenu = false">
+                              <span class="scope-icon">📋</span>
+                              <span class="scope-name">查看/管理记忆</span>
                             </div>
                           </div>
                         </div>
@@ -427,6 +541,162 @@
       </div>
       </template>
   </div>
+
+  <!-- 记忆管理面板 - 覆盖层 -->
+  <div v-if="showMemoryPanel" class="memory-panel-overlay" @click.self="closeMemoryPanel">
+    <div class="memory-panel">
+      <!-- 面板头部 -->
+      <div class="memory-panel-header">
+        <div class="memory-panel-title">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+            <path d="M2 17l10 5 10-5"></path>
+            <path d="M2 12l10 5 10-5"></path>
+          </svg>
+          AI 记忆管理
+          <span v-if="userMemories.length > 0" class="memory-count-badge">{{ userMemories.length }}</span>
+        </div>
+        <div class="memory-scope-toggle">
+          <button
+            :class="['scope-btn', { active: memoryScope === 'global' }]"
+            @click="switchMemoryScope('global')"
+            title="全局记忆：跨会话共享"
+          >
+            🧠 全局记忆
+          </button>
+          <button
+            :class="['scope-btn', { active: memoryScope === 'session' }]"
+            @click="switchMemoryScope('session')"
+            title="会话记忆：仅当前会话"
+          >
+            🔒 会话记忆
+          </button>
+        </div>
+        <div class="memory-panel-actions">
+          <button class="memory-action-btn cleanup-btn" @click="handleCleanupExpired" :disabled="isLoadingMemories" title="清理90天前的过期记忆">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="23 4 6 8.5 12 17.5"></polyline>
+              <path d="M16 4c0 2-2 4-4 4s-4-2-4-4"></path>
+            </svg>
+            清理过期
+          </button>
+          <button class="memory-action-btn danger-btn" @click="handleDeleteAll" :disabled="isLoadingMemories || userMemories.length === 0" title="清空所有记忆">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="3 6 5 6 21 6"></polyline>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            </svg>
+            清空全部
+          </button>
+          <button class="memory-close-btn" @click="closeMemoryPanel" title="关闭面板">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- 面板内容 -->
+      <div class="memory-panel-body">
+        <!-- 加载中 -->
+        <div v-if="isLoadingMemories" class="memory-loading">
+          <div class="loading-spinner"></div>
+          <span>加载中...</span>
+        </div>
+
+        <!-- 空状态 -->
+        <div v-else-if="userMemories.length === 0 && !isRefiningMemories" class="memory-empty">
+          <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3">
+            <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+            <path d="M2 17l10 5 10-5"></path>
+            <path d="M2 12l10 5 10-5"></path>
+          </svg>
+          <p>暂无记忆记录</p>
+          <span>在使用 AI 记忆模式对话时，系统会自动记住重要信息</span>
+        </div>
+
+        <!-- 记忆/消息列表 -->
+        <div v-else class="memory-list">
+          <!-- 精炼中提示 -->
+          <div v-if="isRefiningMemories" class="memory-refining-banner">
+            <div class="refining-spinner"></div>
+            <span>正在精炼压缩记忆，请稍候...</span>
+          </div>
+
+          <div v-for="mem in userMemories" :key="mem.id" class="memory-card">
+            <!-- 显示模式 -->
+            <template v-if="editingMemoryId !== mem.id">
+              <div class="memory-card-content">
+                <div class="memory-header">
+                  <!-- 会话消息显示角色标签 -->
+                  <template v-if="mem.role">
+                    <span class="memory-role-badge" :class="mem.role">
+                      {{ mem.role === 'user' ? '💬 对话精炼' : mem.role === 'system' ? '⚙️ 系统' : '🤖 助手' }}
+                    </span>
+                  </template>
+                  <!-- 全局记忆：显示对话精炼标签 -->
+                  <template v-else>
+                    <span class="memory-role-badge conversation">
+                      💬 对话精炼
+                    </span>
+                  </template>
+                </div>
+                <p class="memory-text">{{ formatConversationMemory(mem) }}</p>
+                <div v-if="!mem.role" class="memory-meta">
+                  <span class="memory-time">{{ formatMemoryTime(mem.created_at) }}</span>
+                  <!-- 记忆权重可视化 -->
+                  <template v-if="mem.importance_score !== undefined">
+                    <span class="memory-weight">
+                      <span class="weight-bar" :style="{ width: (mem.importance_score * 100) + '%', background: getWeightColor(mem.importance_score) }"></span>
+                      {{ mem.freshness_label }}
+                    </span>
+                    <span class="memory-score" :title="'重要度: ' + mem.importance_score">
+                      ★ {{ (mem.importance_score * 5).toFixed(1) }}
+                    </span>
+                  </template>
+                </div>
+              </div>
+              <div class="memory-card-actions">
+                <button class="memory-action-icon delete-icon" @click="handleDeleteMemory(mem)" title="删除">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="3 6 5 6 21 6"></polyline>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                  </svg>
+                </button>
+              </div>
+            </template>
+
+            <!-- 编辑模式（仅全局记忆支持） -->
+            <template v-else>
+              <div class="memory-card-content memory-editing">
+                <textarea
+                  v-model="editingMemoryText"
+                  class="memory-edit-input"
+                  rows="3"
+                  @keydown.esc="cancelEditMemory"
+                ></textarea>
+              </div>
+              <div class="memory-card-actions">
+                <button class="memory-action-btn save-btn" @click="saveEditMemory(mem.id)" title="保存">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                  </svg>
+                  保存
+                </button>
+                <button class="memory-action-btn cancel-btn" @click="cancelEditMemory" title="取消">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                  </svg>
+                  取消
+                </button>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 </template>
 
 <script>
@@ -454,13 +724,21 @@ export default {
   name: 'App',
   setup() {
     // 登录相关状态
-    const isLoggedIn = ref(true);
+    const isLoggedIn = ref(false); // 默认未登录，需要后端验证
     // 侧边栏展开/收起状态
     const isSidebarExpanded = ref(true);
     const username = ref('');
     const password = ref('');
     const currentUser = ref('');
     const loginError = ref('');
+    // 注册相关状态
+    const showRegister = ref(false);
+    const regUsername = ref('');
+    const regDisplayName = ref('');
+    const regPassword = ref('');
+    const regPasswordConfirm = ref('');
+    const registerError = ref('');
+    const registerSuccess = ref('');
     // 用户信息显示状态（用于头像点击显示用户信息）
     const showUserInfo = ref(false);
     // 头像和下拉框的引用
@@ -521,6 +799,440 @@ export default {
         archMenuPosition.value = 'up';
         showArchMenu.value = true;
       }
+    };
+
+    // 记忆模式选择菜单
+    const showMemoryMenu = ref(false);
+    const selectedMemoryMode = ref('file'); // 'file' | 'mem0'
+    const memorySelectorRef = ref(null);
+    const mem0Available = ref(false);
+    const mem0StatusMessage = ref('正在检查...');
+
+    const toggleMemoryMenu = () => {
+      showMemoryMenu.value = !showMemoryMenu.value;
+    };
+
+    const switchMemoryMode = (mode) => {
+      selectedMemoryMode.value = mode;
+      localStorage.setItem('memoryMode', mode);
+    };
+
+    // 检查 mem0 可用性
+    const checkMemoryStatus = async () => {
+      try {
+        const response = await fetch('http://127.0.0.1:8000/api/memory_status');
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success && data.mem0) {
+            mem0Available.value = data.mem0.available;
+            mem0StatusMessage.value = data.mem0.message;
+            console.log('[记忆状态] mem0 available:', mem0Available.value, 'message:', mem0StatusMessage.value);
+          }
+        }
+      } catch (e) {
+        mem0StatusMessage.value = '无法连接后端服务';
+        console.error('Memory status check failed:', e);
+      }
+    };
+
+    // =========================================================================
+    // 记忆管理面板
+    // =========================================================================
+    const showMemoryPanel = ref(false);
+    const userMemories = ref([]);
+    const isLoadingMemories = ref(false);
+    const isRefiningMemories = ref(false);
+    let memoryRefreshTimer = null;
+    const memoryCount = ref(0);
+    const memoryScope = ref('global'); // 'global' | 'session'
+    const editingMemoryId = ref(null);
+    const editingMemoryText = ref('');
+
+    // 记忆范围切换菜单
+    const showScopeMenu = ref(false);
+    const memoryMgmtRef = ref(null);
+
+    const toggleScopeMenu = () => {
+      showScopeMenu.value = !showScopeMenu.value;
+    };
+
+    const openMemoryPanel = async () => {
+      showMemoryPanel.value = true;
+      await fetchUserMemories();
+    };
+
+    const closeMemoryPanel = () => {
+      showMemoryPanel.value = false;
+      cancelEditMemory();
+    };
+
+    const fetchUserMemories = async (skipRefiningCheck = false) => {
+      if (!currentUser.value) return;
+      isLoadingMemories.value = true;
+      const controller = new AbortController();
+      const timer = window.setTimeout(() => controller.abort(), 10000);
+      try {
+        if (memoryScope.value === 'session') {
+          // 会话模式：直接从会话文件获取消息
+          const currentSid = selectedSessionId.value || 'default_session';
+          console.log('[记忆面板] 会话模式, 获取当前会话消息, session:', currentSid);
+          const response = await fetch('http://127.0.0.1:8000/api/session_messages', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: currentUser.value, session_id: currentSid }),
+            signal: controller.signal
+          });
+          if (response.ok) {
+            const data = await response.json();
+            console.log('[记忆面板] 会话消息数:', data.total);
+            userMemories.value = (data.messages || []).map((m, idx) => ({
+              id: `msg_${idx}`,
+              memory: m.content,
+              role: m.role,
+              message_index: idx,
+              session_id: currentSid,
+              created_at: Date.now() / 1000,
+            }));
+            memoryCount.value = userMemories.value.length;
+          }
+        } else {
+          // 全局模式：从 mem0 获取长期记忆
+          const body = { user_id: currentUser.value, top_k: 200 };
+          console.log('[记忆面板] 全局模式, 请求 mem0 记忆列表');
+          const response = await fetch('http://127.0.0.1:8000/api/memories/list', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+            signal: controller.signal
+          });
+          if (response.ok) {
+            const data = await response.json();
+            console.log('[记忆面板] 全局记忆数:', data.total || 0);
+            userMemories.value = (data.memories || []).filter(m => m.scope_label === 'global');
+            console.log('[记忆面板] 过滤后全局记忆数:', userMemories.value.length);
+            memoryCount.value = userMemories.value.length;
+
+            // 调试：打印每条记忆的原始数据
+            console.log('[记忆面板] 记忆详情:', userMemories.value.map(m => ({
+              id: m.id,
+              memory: (m.memory || '').slice(0, 60),
+              fact_source: m.fact_source,
+              fact_category: m.fact_category,
+              role: getGlobalMemoryRole(m),
+            })));
+
+            // 检查后台是否有正在进行的记忆精炼任务
+            if (!skipRefiningCheck) {
+              await checkRefiningStatus();
+            }
+          }
+        }
+      } catch (e) {
+        console.error('获取记忆列表失败:', e);
+        userMemories.value = [];
+        memoryCount.value = 0;
+      } finally {
+        window.clearTimeout(timer);
+        isLoadingMemories.value = false;
+      }
+    };
+
+    const checkRefiningStatus = async () => {
+      // 检查后端是否有正在进行的记忆精炼任务
+      try {
+        const response = await fetch('http://127.0.0.1:8000/api/memories/refining_status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            user_id: currentUser.value,
+            top_k: 1,
+            memory_mode: selectedMemoryMode.value,
+          }),
+        });
+        if (response.ok) {
+          const data = await response.json();
+          isRefiningMemories.value = data.is_refining === true;
+          console.log('[记忆面板] 精炼状态:', isRefiningMemories.value ? '正在精炼中' : '空闲');
+
+          // 如果正在精炼，启动定时刷新
+          if (isRefiningMemories.value && !memoryRefreshTimer) {
+            console.log('[记忆面板] 检测到后台精炼任务，启动自动刷新...');
+            memoryRefreshTimer = window.setInterval(async () => {
+              try {
+                // 先检查精炼状态
+                const statusResp = await fetch('http://127.0.0.1:8000/api/memories/refining_status', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    user_id: currentUser.value,
+                    top_k: 1,
+                    memory_mode: selectedMemoryMode.value,
+                  }),
+                });
+                if (statusResp.ok) {
+                  const statusData = await statusResp.json();
+                  isRefiningMemories.value = statusData.is_refining === true;
+                  if (!statusData.is_refining) {
+                    // 精炼完成，停止刷新并重新加载记忆
+                    window.clearInterval(memoryRefreshTimer);
+                    memoryRefreshTimer = null;
+                    console.log('[记忆面板] 精炼完成，停止自动刷新');
+                    await fetchUserMemories(true);
+                    return;
+                  }
+                }
+                // 还在精炼中，刷新记忆列表
+                const listResp = await fetch('http://127.0.0.1:8000/api/memories/list', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ user_id: currentUser.value, top_k: 200 }),
+                });
+                if (listResp.ok) {
+                  const d = await listResp.json();
+                  userMemories.value = (d.memories || []).filter(mm => mm.scope_label === 'global');
+                  memoryCount.value = userMemories.value.length;
+                }
+              } catch (refreshErr) {
+                console.warn('[记忆面板] 自动刷新失败:', refreshErr);
+              }
+            }, 5000); // 每5秒刷新一次
+          }
+        }
+      } catch (e) {
+        console.warn('[记忆面板] 检查精炼状态失败:', e);
+      }
+    };
+
+    // 切换记忆范围并刷新
+    const switchMemoryScope = async (scope) => {
+      memoryScope.value = scope;
+      localStorage.setItem('memoryScope', scope);
+      // 不自动切换 memory_mode — 尊重用户的选择
+      // file 模式下选择全局范围时，file_memory.save_history 会自动提取到 mem0
+      await fetchUserMemories();
+    };
+
+    const startEditMemory = (mem) => {
+      editingMemoryId.value = mem.id;
+      editingMemoryText.value = mem.memory;
+    };
+
+    const cancelEditMemory = () => {
+      editingMemoryId.value = null;
+      editingMemoryText.value = '';
+    };
+
+    const saveEditMemory = async (memoryId) => {
+      if (!editingMemoryText.value.trim()) return;
+      try {
+        const response = await fetch('http://127.0.0.1:8000/api/memories/update', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            user_id: currentUser.value,
+            memory_id: memoryId,
+            new_text: editingMemoryText.value
+          })
+        });
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success) {
+            // 更新本地列表
+            const idx = userMemories.value.findIndex(m => m.id === memoryId);
+            if (idx !== -1) {
+              userMemories.value[idx].memory = editingMemoryText.value;
+            }
+            cancelEditMemory();
+          } else {
+            window.alert('更新失败: ' + (data.error || '未知错误'));
+          }
+        }
+      } catch (e) {
+        window.alert('更新失败: ' + e.message);
+      }
+    };
+
+    const handleDeleteMemory = async (mem) => {
+      if (!window.confirm('确认删除这条记录？')) return;
+      try {
+        if (memoryScope.value === 'session') {
+          // 会话模式：从会话文件中删除消息
+          const currentSid = selectedSessionId.value || 'default_session';
+          const response = await fetch('http://127.0.0.1:8000/api/delete_session_message', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              user_id: currentUser.value,
+              session_id: currentSid,
+              message_index: mem.message_index
+            })
+          });
+          if (response.ok) {
+            const data = await response.json();
+            if (data.success) {
+              // 刷新列表
+              await fetchUserMemories();
+            } else {
+              window.alert('删除失败: ' + (data.error || '未知错误'));
+            }
+          }
+        } else {
+          // 全局模式：从 mem0 删除记忆
+          const response = await fetch('http://127.0.0.1:8000/api/memories/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: currentUser.value, memory_id: mem.id })
+          });
+          if (response.ok) {
+            const data = await response.json();
+            if (data.success) {
+              userMemories.value = userMemories.value.filter(m => m.id !== mem.id);
+              memoryCount.value = userMemories.value.length;
+            } else {
+              window.alert('删除失败: ' + (data.error || '未知错误'));
+            }
+          }
+        }
+      } catch (e) {
+        window.alert('删除失败: ' + e.message);
+      }
+    };
+
+    const handleDeleteAll = async () => {
+      if (memoryScope.value === 'session') {
+        // 会话模式：清空当前会话文件
+        const currentSid = selectedSessionId.value || 'default_session';
+        const confirmMsg = `确认清空当前会话 "${currentSid}" 的所有对话记录？此操作不可恢复。`;
+        if (!window.confirm(confirmMsg)) return;
+        try {
+          const response = await fetch('http://127.0.0.1:8000/api/delete_session', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: currentUser.value, session_id: currentSid })
+          });
+          if (response.ok) {
+            userMemories.value = [];
+            memoryCount.value = 0;
+            // 重新创建空会话
+            await fetch('http://127.0.0.1:8000/api/create_session', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ user_id: currentUser.value, session_id: currentSid })
+            });
+          }
+        } catch (e) {
+          window.alert('清空失败: ' + e.message);
+        }
+      } else {
+        // 全局模式：清空 mem0 记忆
+        const confirmMsg = '确认清空所有 AI 记忆？此操作不可恢复。';
+        if (!window.confirm(confirmMsg)) return;
+        try {
+          const body = { user_id: currentUser.value };
+          const response = await fetch('http://127.0.0.1:8000/api/memories/delete_all', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+          if (response.ok) {
+            const data = await response.json();
+            if (data.success) {
+              userMemories.value = [];
+              memoryCount.value = 0;
+            } else {
+              window.alert('清空失败: ' + (data.error || '未知错误'));
+            }
+          }
+        } catch (e) {
+          window.alert('清空失败: ' + e.message);
+        }
+      }
+    };
+
+    const handleCleanupExpired = async () => {
+      if (!window.confirm('将清理超过 90 天的记忆，确认继续？')) return;
+      try {
+        const response = await fetch('http://127.0.0.1:8000/api/memories/cleanup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: currentUser.value, max_age_days: 90, max_count: 200 })
+        });
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success) {
+            window.alert(`清理完成：删除 ${data.deleted_count} 条记忆，剩余 ${data.remaining_count} 条`);
+            await fetchUserMemories();
+          } else {
+            window.alert('清理失败: ' + (data.error || '未知错误'));
+          }
+        }
+      } catch (e) {
+        window.alert('清理失败: ' + e.message);
+      }
+    };
+
+    const formatMemoryTime = (timestamp) => {
+      if (!timestamp || timestamp === 0) return '最近添加';
+      let ts = timestamp;
+      // 处理字符串格式的时间戳
+      if (typeof timestamp === 'string') {
+        ts = parseFloat(timestamp);
+        if (isNaN(ts) || ts === 0) return '最近添加';
+        // 如果解析后是一个很小的数（如0.0），也认为是无效时间戳
+        if (ts < 1000) return '最近添加';
+        const d = new Date(timestamp);
+        if (isNaN(d.getTime())) return '未知时间';
+        ts = d.getTime() / 1000;
+      }
+      // 如果是毫秒级时间戳（> 10^12），转换为秒
+      if (ts > 1e12) ts = ts / 1000;
+
+      const now = Date.now() / 1000;
+      const diff = now - ts;
+      if (diff < 0) return '刚刚';
+      if (diff < 60) return '刚刚';
+      if (diff < 3600) return Math.floor(diff / 60) + ' 分钟前';
+      if (diff < 86400) return Math.floor(diff / 3600) + ' 小时前';
+      if (diff < 2592000) return Math.floor(diff / 86400) + ' 天前';
+      if (diff < 31536000) return Math.floor(diff / 2592000) + ' 个月前';
+      return Math.floor(diff / 31536000) + ' 年前';
+    };
+
+    const getWeightColor = (score) => {
+      // score 0-1, 返回对应的颜色
+      if (score >= 0.8) return '#34d399'; // 绿色 - 高重要
+      if (score >= 0.6) return '#60a5fa'; // 蓝色 - 中高
+      if (score >= 0.4) return '#fbbf24'; // 黄色 - 中等
+      if (score >= 0.2) return '#fb923c'; // 橙色 - 中低
+      return '#94a3b8'; // 灰色 - 低
+    };
+
+    // 全局记忆：格式化对话精炼记忆
+    const formatConversationMemory = (mem) => {
+      if (!mem || !mem.memory) return '';
+      let text = mem.memory;
+
+      // 兼容旧格式：移除 [用户]/[助手] 前缀
+      if (text.startsWith('[助手]')) text = text.slice(4).trim();
+      else if (text.startsWith('[用户]')) text = text.slice(4).trim();
+
+      // 新格式：用户：... | 助手：... → 美化显示
+      text = text.replace(/\| 用户：/g, '\n用户：');
+      text = text.replace(/\| 助手：/g, '\n助手：');
+
+      return text;
+    };
+
+    const getGlobalMemoryRole = (mem) => {
+      return 'conversation';
+    };
+
+    const getGlobalMemoryRoleIcon = (mem) => {
+      return '💬';
+    };
+
+    const getGlobalMemoryRoleLabel = (mem) => {
+      return '对话精炼';
     };
 
     // 自动调整textarea高度
@@ -602,14 +1314,28 @@ export default {
         { username: 'root2', password: '', userId: 'root2' },
         { username: 'root3', password: '', userId: 'root3' }
       ];
-      
+
       // 查找对应的用户并设置currentUser
       const savedUser = validUsers.find(u => u.userId === savedUserId);
       if (savedUser) {
         currentUser.value = savedUser.username;
       }
     }
-    
+
+    // 恢复记忆模式设置
+    const savedMemoryMode = localStorage.getItem('memoryMode');
+    if (savedMemoryMode && ['file', 'mem0'].includes(savedMemoryMode)) {
+      selectedMemoryMode.value = savedMemoryMode;
+    }
+
+    // 恢复记忆范围设置
+    const savedMemoryScope = localStorage.getItem('memoryScope');
+    if (savedMemoryScope && ['global', 'session'].includes(savedMemoryScope)) {
+      memoryScope.value = savedMemoryScope;
+    }
+
+    console.log('[初始化] memoryMode:', selectedMemoryMode.value, 'memoryScope:', memoryScope.value);
+
     // 主界面相关状态
     const userInput = ref('');
     const chatMessages = ref([]); // Unified chat history: { type: 'user'|'assistant'|'THINKING'|'PROCESS', content: string }
@@ -777,34 +1503,85 @@ export default {
     };
 
     // 处理登录
-    const handleLogin = () => {
-      // 清空错误信息
+    const handleLogin = async () => {
       loginError.value = '';
-      
-      // 定义测试用户列表
-      const validUsers = [
-        { username: 'root1', password: '', userId: 'root1' },
-        { username: 'root2', password: '', userId: 'root2' },
-        { username: 'root3', password: '', userId: 'root3' }
-      ];
-      
-      // 查找用户
-      const user = validUsers.find(u => u.username === username.value && u.password === password.value);
-      
-      if (user) {
-        // 登录成功
-        isLoggedIn.value = true;
-        currentUser.value = user.username;
-        // 保存用户ID（在实际应用中可能会保存token）
-        localStorage.setItem('currentUserId', user.userId);
-        // 登录成功后执行页面滚动到顶部
-        window.scrollTo(0, 0);
-        // 清空输入
-        username.value = '';
-        password.value = '';
-      } else {
-        // 登录失败
-        loginError.value = '用户名或密码错误';
+
+      if (!username.value || !password.value) {
+        loginError.value = '请输入用户名和密码';
+        return;
+      }
+
+      try {
+        const response = await fetch('http://127.0.0.1:8000/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: username.value,
+            password: password.value,
+          }),
+        });
+        const data = await response.json();
+
+        if (data.success) {
+          isLoggedIn.value = true;
+          currentUser.value = data.username;
+          localStorage.setItem('currentUserId', String(data.user_id));
+          localStorage.setItem('currentUserName', data.username);
+          localStorage.setItem('currentDisplayName', data.display_name || data.username);
+          // 记录登录时间，48小时内免登录
+          localStorage.setItem('loginTimestamp', String(Date.now()));
+          window.scrollTo(0, 0);
+          username.value = '';
+          password.value = '';
+        } else {
+          loginError.value = data.error || '用户名或密码错误';
+        }
+      } catch (e) {
+        loginError.value = `登录请求失败: ${e.message}`;
+      }
+    };
+
+    // 处理注册
+    const handleRegister = async () => {
+      registerError.value = '';
+      registerSuccess.value = '';
+
+      if (!regUsername.value || regUsername.value.trim().length < 2) {
+        registerError.value = '用户名至少2个字符';
+        return;
+      }
+      if (!regPassword.value || regPassword.value.length < 6) {
+        registerError.value = '密码至少6个字符';
+        return;
+      }
+      if (regPassword.value !== regPasswordConfirm.value) {
+        registerError.value = '两次输入的密码不一致';
+        return;
+      }
+
+      try {
+        const response = await fetch('http://127.0.0.1:8000/api/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: regUsername.value,
+            password: regPassword.value,
+            display_name: regDisplayName.value,
+          }),
+        });
+        const data = await response.json();
+
+        if (data.success) {
+          registerSuccess.value = '注册成功！请返回登录';
+          regUsername.value = '';
+          regDisplayName.value = '';
+          regPassword.value = '';
+          regPasswordConfirm.value = '';
+        } else {
+          registerError.value = data.error || '注册失败';
+        }
+      } catch (e) {
+        registerError.value = `注册请求失败: ${e.message}`;
       }
     };
 
@@ -1003,10 +1780,10 @@ export default {
     };
 
     // 新建会话
-    const createNewSession = () => {
+    const createNewSession = async () => {
       // 生成新的会话ID (使用时间戳+随机数确保唯一性)
       const newSessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      
+
       // 创建新会话对象
       const newSession = {
         session_id: newSessionId,
@@ -1014,15 +1791,26 @@ export default {
         memory: [],
         total_messages: 0
       };
-      
+
       // 将新会话添加到会话列表的最前面
       sessions.value.unshift(newSession);
-      
+
+      // 同步到后端（创建空会话文件，确保刷新后仍存在）
+      try {
+        await fetch('http://127.0.0.1:8000/api/create_session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: currentUser.value, session_id: newSessionId })
+        });
+      } catch (e) {
+        console.warn('新建会话同步到后端失败（不影响使用）:', e);
+      }
+
       // 清空当前内容
       processMessages.value = [];
       answerText.value = '';
       userInput.value = '';
-      
+
       // 选中新会话
       selectSession(newSessionId);
     };
@@ -1075,6 +1863,9 @@ export default {
       isLoggedIn.value = false;
       currentUser.value = '';
       localStorage.removeItem('currentUserId');
+      localStorage.removeItem('currentUserName');
+      localStorage.removeItem('currentDisplayName');
+      localStorage.removeItem('loginTimestamp');
       // 清空聊天内容
       processMessages.value = [];
       answerText.value = '';
@@ -1089,6 +1880,9 @@ export default {
       isLoggedIn.value = false;
       currentUser.value = '';
       localStorage.removeItem('currentUserId');
+      localStorage.removeItem('currentUserName');
+      localStorage.removeItem('currentDisplayName');
+      localStorage.removeItem('loginTimestamp');
     };
     
     // 处理发送请求
@@ -1153,7 +1947,12 @@ export default {
                 'Content-Type': 'application/json'
               },
               body: JSON.stringify({
-                question: userInput.value.trim()
+                query: userInput.value.trim(),
+                context: {
+                  user_id: currentUser.value || 'root1',
+                  session_id: null
+                },
+                mode: 'agents'
               })
             });
 
@@ -1208,6 +2007,8 @@ export default {
             session_id: selectedSessionId.value || ''
           },
           mode: selectedArchitecture.value,
+          memory_mode: selectedMemoryMode.value,
+          memory_scope: memoryScope.value,
           model_config: runtimeModelConfig.value?.base_url && runtimeModelConfig.value?.api_key && runtimeModelConfig.value?.chat_model
             ? {
                 provider: runtimeModelConfig.value.provider || 'custom',
@@ -1221,8 +2022,10 @@ export default {
 
         
         console.log('发送请求，会话ID:', selectedSessionId.value);
-        
+
         console.log('发送请求，用户ID:', finalUserId);
+
+        console.log('发送请求，memory_mode:', selectedMemoryMode.value, 'memory_scope:', memoryScope.value);
         
         try {
           // 调用后端API
@@ -1300,8 +2103,12 @@ export default {
           //    }
           // }
           
-          // 会话请求结束后刷新历史会话区域
-          fetchUserSessions();
+          // 会话请求结束后：按需刷新会话列表
+          // 只在当前会话不在列表中时刷新（新创建的会话），避免每次问答都刷新导致闪烁
+          const currentInList = sessions.value.some(s => s.session_id === selectedSessionId.value);
+          if (!currentInList) {
+            fetchUserSessions();
+          }
         }
         
         // 清空输入框
@@ -1539,6 +2346,29 @@ export default {
     
     // 组件挂载时检查登录状态并获取会话列表
     onMounted(() => {
+      // 初始化默认管理员账号
+      fetch('http://127.0.0.1:8000/api/auth/init_default_user', { method: 'POST' }).catch(() => {});
+
+      // 检查是否有 48 小时内的登录记录，自动恢复登录状态
+      const savedUserId = localStorage.getItem('currentUserId');
+      const savedUserName = localStorage.getItem('currentUserName');
+      const loginTimestamp = localStorage.getItem('loginTimestamp');
+      if (savedUserId && savedUserName && loginTimestamp) {
+        const elapsed = Date.now() - Number(loginTimestamp);
+        const fortyEightHours = 48 * 60 * 60 * 1000;
+        if (elapsed < fortyEightHours) {
+          isLoggedIn.value = true;
+          currentUser.value = savedUserName;
+          localStorage.setItem('currentUserId', savedUserId);
+        } else {
+          // 超过 48 小时，清除登录信息
+          localStorage.removeItem('currentUserId');
+          localStorage.removeItem('currentUserName');
+          localStorage.removeItem('currentDisplayName');
+          localStorage.removeItem('loginTimestamp');
+        }
+      }
+
       if (isLoggedIn.value && currentUser.value) {
         loadSessionMeta();
         fetchUserSessions();
@@ -1552,13 +2382,28 @@ export default {
       // 获取当前模型配置
       fetchModelConfig();
 
+      // 检查 mem0 记忆可用性
+      checkMemoryStatus();
+
       // 添加键盘快捷键监听器
       document.addEventListener('keydown', handleKeyDown);
+
+      // 点击外部关闭范围菜单
+      document.addEventListener('mousedown', (e) => {
+        if (showScopeMenu.value && memoryMgmtRef.value && !memoryMgmtRef.value.contains(e.target)) {
+          showScopeMenu.value = false;
+        }
+      });
     });
-    
+
     onUnmounted(() => {
       // 移除键盘快捷键监听器
       document.removeEventListener('keydown', handleKeyDown);
+      // 清理记忆自动刷新定时器
+      if (memoryRefreshTimer) {
+        window.clearInterval(memoryRefreshTimer);
+        memoryRefreshTimer = null;
+      }
     });
     
     // 处理键盘快捷键
@@ -1618,6 +2463,13 @@ export default {
       password,
       currentUser,
       loginError,
+      showRegister,
+      regUsername,
+      regDisplayName,
+      regPassword,
+      regPasswordConfirm,
+      registerError,
+      registerSuccess,
       showUserInfo,
       toggleUserInfo,
       avatarContainerRef,
@@ -1626,6 +2478,7 @@ export default {
       triggerAvatarUpload,
       handleAvatarUpload,
       handleLogin,
+      handleRegister,
       handleLogout,
       goToLogin,
       // 主界面相关
@@ -1650,9 +2503,45 @@ export default {
       isLoadingSessions,
       showSessions,
       toggleSessions,
+      // 记忆管理面板
+      showMemoryPanel,
+      userMemories,
+      isLoadingMemories,
+      memoryCount,
+      memoryScope,
+      showScopeMenu,
+      toggleScopeMenu,
+      memoryMgmtRef,
+      switchMemoryScope,
+      editingMemoryId,
+      editingMemoryText,
+      isRefiningMemories,
+      openMemoryPanel,
+      closeMemoryPanel,
+      fetchUserMemories,
+      startEditMemory,
+      cancelEditMemory,
+      saveEditMemory,
+      handleDeleteMemory,
+      handleDeleteAll,
+      handleCleanupExpired,
+      formatMemoryTime,
+      getWeightColor,
+      getGlobalMemoryRole,
+      getGlobalMemoryRoleIcon,
+      getGlobalMemoryRoleLabel,
+      formatConversationMemory,
       // 导航栏相关
       selectedNavItem,
       selectedArchitecture,
+      selectedMemoryMode,
+      showMemoryMenu,
+      memorySelectorRef,
+      toggleMemoryMenu,
+      switchMemoryMode,
+      mem0Available,
+      mem0StatusMessage,
+      checkMemoryStatus,
       degradeBanner,
       showModelConfig,
       runtimeModelConfig,
@@ -1860,6 +2749,77 @@ export default {
   color: #374151;
 }
 
+/* 会话分组 */
+.session-group {
+  margin-bottom: 8px;
+}
+
+.session-group-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #e2e8f0;
+  padding: 6px 8px 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* 会话项 */
+.session-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s;
+  gap: 6px;
+  color: #f0f0f0;
+}
+
+.session-item:hover {
+  background: rgba(100, 255, 218, 0.05);
+}
+
+.session-item.selected {
+  background: rgba(100, 255, 218, 0.1);
+  border-left: 3px solid #6366f1;
+}
+
+.session-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.session-preview {
+  font-size: 13px;
+  color: #f0f0f0;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+
+.session-menu-trigger {
+  padding: 2px 6px;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  color: #9ca3af;
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+
+.session-menu-trigger:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #f0f0f0;
+}
+
 
 
 /* 登录页面样式 */
@@ -1960,6 +2920,63 @@ export default {
 
 .login-hint p {
   margin: 5px 0;
+}
+
+.login-toggle {
+  margin-top: 16px;
+  font-size: 14px;
+  color: #666;
+}
+
+.login-toggle a {
+  color: #2196F3;
+  text-decoration: none;
+  margin-left: 4px;
+  cursor: pointer;
+}
+
+.login-toggle a:hover {
+  text-decoration: underline;
+}
+
+.login-success {
+  margin-top: 10px;
+  padding: 8px 12px;
+  background-color: #e8f5e9;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #2e7d32;
+}
+
+/* 注册表单覆盖层 */
+.register-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 9999;
+}
+
+.register-form {
+  background: white;
+  border-radius: 12px;
+  padding: 40px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  width: 100%;
+  max-width: 420px;
+  text-align: center;
+}
+
+.register-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: #1a1a2e;
+  margin-bottom: 24px;
 }
 
 .login-feature-section {
@@ -2952,5 +3969,1099 @@ export default {
 .model-down {
      padding-left: 50px;
      margin-top: 10px;
+}
+
+/* ==========================================================================
+   输入框底部控制栏布局
+   ========================================================================== */
+
+.input-bottom-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 4px 4px;
+  gap: 6px;
+}
+
+.input-controls-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+/* 架构选择器 - 紧凑显示 */
+.arch-selector {
+  position: relative;
+}
+
+.arch-trigger {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px;
+  background: #f5f7fb;
+  border: 1px solid #e3e8f0;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #4b5563;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.arch-trigger:hover {
+  background: #eef1f6;
+  border-color: #c5cdd8;
+}
+
+.arch-trigger svg:first-child {
+  flex-shrink: 0;
+}
+
+.arch-trigger span {
+  max-width: 60px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+
+.arch-dropdown {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 100;
+  background: #fff;
+  border: 1px solid #e3e8f0;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  padding: 6px;
+  min-width: 240px;
+}
+
+.arch-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.arch-option:hover {
+  background: #f5f7fb;
+}
+
+.arch-option.active {
+  background: #eef4ff;
+}
+
+.arch-option-icon {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.agents-icon {
+  background: linear-gradient(135deg, #6366f1, #4f46e5);
+}
+
+.langgraph-icon {
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+}
+
+.arch-option-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.arch-option-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.arch-option-desc {
+  font-size: 11px;
+  color: #6b7280;
+  margin-top: 2px;
+}
+
+.arch-option-check {
+  color: #6366f1;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+/* 文件上传按钮 */
+.file-upload-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: #6b7280;
+  cursor: pointer;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.file-upload-btn:hover {
+  background: #f5f7fb;
+  border-color: #e3e8f0;
+  color: #4b5563;
+}
+
+.file-upload-btn.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.file-upload-btn input[type="file"] {
+  display: none;
+}
+
+/* 模型选择器 */
+.model-trigger {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #6b7280;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.model-trigger:hover {
+  background: #f5f7fb;
+  border-color: #e3e8f0;
+  color: #4b5563;
+}
+
+.model-trigger svg:first-child {
+  flex-shrink: 0;
+}
+
+.model-trigger span {
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 发送按钮 */
+.send-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 6px 14px;
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  border: none;
+  border-radius: 8px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.send-btn:hover:not(.disabled) {
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+}
+
+.send-btn.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: #d1d5db;
+}
+
+.send-btn.processing {
+  background: #ef4444;
+}
+
+.send-btn.processing:hover {
+  background: #dc2626;
+}
+
+.send-btn-text {
+  font-size: 12px;
+}
+
+/* ==========================================================================
+   记忆模式选择器样式 (与架构选择器保持一致的设计风格)
+   ========================================================================== */
+
+.memory-selector {
+  position: relative;
+}
+
+.memory-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: #f5f7fb;
+  border: 1px solid #e3e8f0;
+  border-radius: 8px;
+  font-size: 12px;
+  color: #4b5563;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.memory-trigger:hover {
+  background: #eef1f6;
+  border-color: #c5cdd8;
+}
+
+.memory-trigger svg:first-child {
+  flex-shrink: 0;
+}
+
+.memory-trigger span {
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 记忆模式触发器上的范围标签 */
+.scope-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.scope-badge.global {
+  background: rgba(99, 102, 241, 0.15);
+  color: #6366f1;
+  border: 1px solid rgba(99, 102, 241, 0.3);
+}
+
+.scope-badge.session {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.memory-dropdown {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 100;
+  background: #fff;
+  border: 1px solid #e3e8f0;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  padding: 6px;
+  min-width: 260px;
+}
+
+/* 下拉菜单中的范围切换区域 */
+.memory-dropdown-scope {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  background: #f9fafb;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+}
+
+.scope-label {
+  font-size: 12px;
+  color: #6b7280;
+  white-space: nowrap;
+}
+
+.scope-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 12px;
+  color: #6b7280;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.scope-pill:hover {
+  border-color: #9ca3af;
+  color: #374151;
+}
+
+.scope-pill.active {
+  font-weight: 600;
+  border-color: #6366f1;
+  background: #eef2ff;
+  color: #4f46e5;
+}
+
+.scope-pill.active[style*="session"],
+.scope-pill.session.active {
+  border-color: #10b981;
+  background: #ecfdf5;
+  color: #059669;
+}
+
+.memory-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.memory-option:hover {
+  background: #f5f7fb;
+}
+
+.memory-option.active {
+  background: #eef4ff;
+}
+
+.memory-option-icon {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.file-icon {
+  background: linear-gradient(135deg, #6366f1, #4f46e5);
+}
+
+.mem0-icon {
+  background: linear-gradient(135deg, #10b981, #059669);
+}
+
+.memory-option-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.memory-option-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.memory-option-desc {
+  font-size: 11px;
+  color: #6b7280;
+  margin-top: 2px;
+}
+
+.memory-option-desc.error {
+  color: #ef4444;
+  font-style: italic;
+}
+
+.memory-option.disabled {
+  opacity: 0.5;
+  cursor: not-allowed !important;
+  pointer-events: none;
+}
+
+.memory-option-check {
+  color: #6366f1;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+/* ==========================================================================
+   记忆管理面板样式
+   ========================================================================== */
+
+/* 记忆管理按钮包装器 */
+.memory-mgmt-wrapper {
+  position: relative;
+}
+
+/* 记忆管理按钮 */
+.memory-mgmt-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: rgba(56, 189, 248, 0.08);
+  border: 1px solid rgba(56, 189, 248, 0.2);
+  border-radius: 6px;
+  color: var(--tech-text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.memory-mgmt-btn:hover {
+  background: rgba(56, 189, 248, 0.15);
+  border-color: rgba(56, 189, 248, 0.4);
+  color: var(--tech-text-main);
+}
+
+.memory-mgmt-btn svg:first-child {
+  flex-shrink: 0;
+}
+
+/* 范围指示标签 */
+.scope-indicator {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.scope-indicator.global {
+  background: rgba(99, 102, 241, 0.15);
+  color: #6366f1;
+}
+
+.scope-indicator.session {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+}
+
+/* 范围下拉箭头 */
+.scope-chevron {
+  flex-shrink: 0;
+  opacity: 0.5;
+  transition: transform 0.2s;
+}
+
+/* 记忆范围下拉菜单 */
+.scope-dropdown {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 100;
+  background: #fff;
+  border: 1px solid #e3e8f0;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  padding: 8px;
+  min-width: 220px;
+}
+
+.scope-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #9ca3af;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 4px 8px 8px;
+}
+
+.scope-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.scope-option:hover {
+  background: #f5f7fb;
+}
+
+.scope-option.active {
+  background: #eef4ff;
+}
+
+.scope-option.view-memories {
+  background: rgba(56, 189, 248, 0.08);
+  border: 1px dashed rgba(56, 189, 248, 0.3);
+}
+
+.scope-option.view-memories:hover {
+  background: rgba(56, 189, 248, 0.15);
+}
+
+.scope-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.scope-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2937;
+  flex-shrink: 0;
+}
+
+.scope-desc {
+  font-size: 11px;
+  color: #9ca3af;
+  margin-left: auto;
+}
+
+.scope-check {
+  color: #6366f1;
+  font-size: 16px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.scope-divider {
+  height: 1px;
+  background: #e5e7eb;
+  margin: 6px 0;
+}
+
+.memory-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  background: #3b82f6;
+  color: white;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 8px;
+}
+
+/* 覆盖层 */
+.memory-panel-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  z-index: 9999;
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* 面板主体 */
+.memory-panel {
+  width: 100%;
+  max-width: 600px;
+  max-height: 70vh;
+  background: #1e293b;
+  border-radius: 16px 16px 0 0;
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: slideUp 0.25s ease;
+}
+
+@keyframes slideUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+/* 面板头部 */
+.memory-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  flex-shrink: 0;
+}
+
+.memory-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--tech-text-main);
+}
+
+.memory-panel-title svg {
+  color: #3b82f6;
+}
+
+.memory-count-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  background: rgba(59, 130, 246, 0.2);
+  color: #60a5fa;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 10px;
+}
+
+.memory-scope-toggle {
+  display: flex;
+  gap: 4px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+  padding: 3px;
+}
+
+.scope-btn {
+  padding: 4px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--tech-text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.scope-btn:hover {
+  color: var(--tech-text-main);
+}
+
+.scope-btn.active {
+  background: rgba(59, 130, 246, 0.2);
+  color: #60a5fa;
+}
+
+.memory-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.memory-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  color: var(--tech-text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.memory-action-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--tech-text-main);
+}
+
+.memory-action-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.memory-action-btn.cleanup-btn {
+  border-color: rgba(59, 130, 246, 0.3);
+  color: #60a5fa;
+}
+
+.memory-action-btn.cleanup-btn:hover:not(:disabled) {
+  background: rgba(59, 130, 246, 0.15);
+}
+
+.memory-action-btn.danger-btn {
+  border-color: rgba(239, 68, 68, 0.3);
+  color: #f87171;
+}
+
+.memory-action-btn.danger-btn:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.15);
+}
+
+.memory-close-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: none;
+  color: var(--tech-text-muted);
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.2s;
+  margin-left: 4px;
+}
+
+.memory-close-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--tech-text-main);
+}
+
+/* 面板内容区 */
+.memory-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+}
+
+.memory-panel-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.memory-panel-body::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+
+/* 加载状态 */
+.memory-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 0;
+  color: var(--tech-text-muted);
+  gap: 12px;
+}
+
+.loading-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 精炼中提示 */
+.memory-refining-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px 20px;
+  margin-bottom: 12px;
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px dashed rgba(59, 130, 246, 0.3);
+  border-radius: 10px;
+  color: #60a5fa;
+  font-size: 14px;
+  gap: 10px;
+}
+
+.refining-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(96, 165, 250, 0.2);
+  border-top-color: #60a5fa;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+/* 空状态 */
+.memory-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 0;
+  color: var(--tech-text-muted);
+  text-align: center;
+  gap: 8px;
+}
+
+.memory-empty p {
+  font-size: 14px;
+  color: var(--tech-text-main);
+  margin: 0;
+}
+
+.memory-empty span {
+  font-size: 12px;
+}
+
+/* 记忆列表 */
+.memory-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.memory-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 12px 14px;
+  transition: all 0.2s;
+  position: relative;
+}
+
+.memory-card:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.memory-card-content {
+  margin-bottom: 8px;
+  padding-right: 70px;
+}
+
+.memory-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.memory-scope-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.memory-scope-badge.global {
+  background: rgba(99, 102, 241, 0.2);
+  color: #818cf8;
+  border: 1px solid rgba(99, 102, 241, 0.3);
+}
+
+.memory-scope-badge.session {
+  background: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.memory-role-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.memory-role-badge.user {
+  background: rgba(99, 102, 241, 0.2);
+  color: #818cf8;
+  border: 1px solid rgba(99, 102, 241, 0.3);
+}
+
+.memory-role-badge.assistant {
+  background: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.memory-role-badge.system {
+  background: rgba(107, 114, 128, 0.2);
+  color: #9ca3af;
+  border: 1px solid rgba(107, 114, 128, 0.3);
+}
+
+.memory-role-badge.conversation {
+  background: rgba(139, 92, 246, 0.2);
+  color: #a78bfa;
+  border: 1px solid rgba(139, 92, 246, 0.3);
+}
+
+.memory-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.memory-weight {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--tech-text-muted);
+  position: relative;
+  flex: 1;
+  min-width: 80px;
+}
+
+.weight-bar {
+  display: inline-block;
+  height: 4px;
+  min-width: 20px;
+  max-width: 60px;
+  border-radius: 2px;
+  transition: width 0.3s, background 0.3s;
+}
+
+.memory-score {
+  font-size: 11px;
+  color: #fbbf24;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.memory-text {
+  margin: 0 0 6px 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--tech-text-main);
+  word-break: break-word;
+}
+
+.memory-time {
+  font-size: 11px;
+  color: var(--tech-text-muted);
+}
+
+.memory-card-actions {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.2s;
+  z-index: 5;
+}
+
+.memory-card:hover .memory-card-actions {
+  opacity: 1;
+}
+
+.memory-action-icon {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  width: 34px !important;
+  height: 34px !important;
+  padding: 0 !important;
+  margin: 0;
+  background: rgba(30, 30, 50, 0.9) !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: #c9cdd5 !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  backdrop-filter: none !important;
+  font-size: 0 !important;
+  font-weight: 400 !important;
+  font-family: inherit !important;
+  line-height: 1 !important;
+}
+
+.memory-action-icon svg {
+  display: block;
+  width: 16px !important;
+  height: 16px !important;
+  flex-shrink: 0;
+}
+
+.memory-action-icon.edit-icon svg {
+  stroke: #c9cdd5 !important;
+  fill: none !important;
+}
+
+.memory-action-icon.delete-icon svg {
+  stroke: #f87171 !important;
+  fill: none !important;
+}
+
+.memory-action-icon.edit-icon:hover {
+  background: rgba(59, 130, 246, 0.3) !important;
+  border-color: rgba(59, 130, 246, 0.5) !important;
+  transform: scale(1.1);
+}
+
+.memory-action-icon.edit-icon:hover svg {
+  stroke: #60a5fa !important;
+}
+
+.memory-action-icon.delete-icon:hover {
+  background: rgba(239, 68, 68, 0.3) !important;
+  border-color: rgba(239, 68, 68, 0.5) !important;
+  transform: scale(1.1);
+}
+
+.memory-action-icon.delete-icon:hover svg {
+  stroke: #ff6b6b !important;
+}
+
+/* 编辑模式 */
+.memory-editing .memory-edit-input {
+  width: 100%;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: var(--tech-text-main);
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.memory-editing .memory-edit-input:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+.memory-card-actions .save-btn {
+  border-color: rgba(34, 197, 94, 0.3);
+  color: #4ade80;
+}
+
+.memory-card-actions .save-btn:hover {
+  background: rgba(34, 197, 94, 0.15);
+}
+
+.memory-card-actions .cancel-btn {
+  border-color: rgba(255, 255, 255, 0.1);
 }
 </style>

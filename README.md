@@ -8,12 +8,16 @@
 
 - **多智能体协作**：调度 Agent + 地质知识专家 + 野外后勤导航专家，自动拆解复杂任务
 - **RAG 知识库检索**：基于 Chroma 向量数据库，支持岩石鉴定、矿物识别、地层分析等专业查询
+- **知识库检索优化**：多路召回（向量+关键词 RRF 融合）→ Re-ranker 精排 → 动态阈值截断
+- **图片多模态处理**：离线图片描述生成，图片内容可被检索
 - **联网实时搜索**：通过 MCP 协议接入百炼 WebSearch，获取天气、灾害预警、实时资讯
 - **地图导航服务**：地址解析、IP 定位、导航链接生成、附近补给点/医疗站查询
 - **双架构运行时切换**：`mode=agents`（OpenAI Agents SDK）或 `mode=langgraph`（LangGraph StateGraph）
-- **会话记忆管理**：多会话并行、轮次裁剪、文件持久化 + 原子写入
+- **会话记忆管理**：多会话并行、轮次裁剪、文件持久化；支持 mem0 三层记忆架构（短期/长期/事实记忆）
 - **流式输出（SSE）**：THINKING / PROCESS / ANSWER / DEGRADE 四级事件，决策过程对前端完全透明
 - **LangGraph 高级能力**：Checkpointing 断点续传、History 历史回溯、Time Travel 时间旅行、Interrupt 中断等待
+- **JWT 认证**：安全的用户认证体系，支持登录/注册
+- **自动驾驶评估 Agent**：独立服务，支持 text2sql、mysql2vector、data_analysis
 
 ---
 
@@ -104,6 +108,9 @@ npm run dev
 | `/api/langgraph/replay` | POST | 从指定 checkpoint 重放执行 |
 | `/api/langgraph/pause` | POST | 中断执行等待用户输入 |
 | `/api/langgraph/resume` | POST | 从中断点继续执行 |
+| `/api/auth/login` | POST | 用户登录 |
+| `/api/auth/register` | POST | 用户注册 |
+| `/api/auth/init_default_user` | POST | 初始化默认用户 |
 
 ### 请求示例
 
@@ -131,21 +138,28 @@ npm run dev
 │   ├── app/                  # 主智能体服务（端口 8000）
 │   │   ├── api/              #   API 路由入口
 │   │   ├── services/         #   业务服务层（任务处理、会话管理、流式响应）
+│   │   │   └── memory/      #   记忆系统（mem0三层记忆）
 │   │   ├── multi_agent/      #   OpenAI Agents SDK 架构
 │   │   ├── multi_agent_langgraph/  # LangGraph 架构
+│   │   ├── multi_agent_autopilot/  # 自动驾驶评估Agent
 │   │   ├── infrastructure/   #   工具层（MCP、知识库、数据库）
 │   │   ├── repositories/     #   数据持久化（会话读写）
 │   │   ├── schemas/          #   请求/响应模型
 │   │   ├── config/           #   配置管理
 │   │   └── prompts/          #   Agent Prompt 模板
 │   │
-│   └── knowledge/            # 知识库服务（端口 8001）
-│       ├── api/              #   API 路由
-│       └── services/         #   文档爬虫、数据摄取、检索服务
+│   ├── knowledge/            # 知识库服务（端口 8001）
+│   │   ├── api/              #   API 路由
+│   │   ├── services/         #   文档爬虫、数据摄取、检索服务
+│   │   │   ├── retrieval_service.py  # 检索服务（含RRF/Re-ranker）
+│   │   │   ├── reranker_service.py  # Cross-Encoder精排
+│   │   │   └── image_description_service.py  # 图片描述
+│   │   └── tests/            #   pytest测试套件
+│   │
+│   └── autopilot/            # 自动驾驶评估服务（独立服务，端口8002）
 │
 └── front/
-    ├── agent_web_ui/         # 前端主界面（Vue 3，端口 5173）
-    └── knowlege_platform_ui/ # 知识管理平台界面
+    └── agent_web_ui/         # 前端主界面（Vue 3，端口 5173）
 ```
 
 ---
@@ -178,31 +192,24 @@ npm run dev
 
 > 详细的改进规划见 [项目改进规划.md](项目改进规划.md)
 
-### P0：记忆系统改造（引入 mem0）
+### ✅ 已完成
 
-当前记忆系统仅保留最近 3 轮对话，缺乏跨会话的语义记忆。计划引入 [mem0](https://github.com/mem0ai/mem0) 实现三级记忆：
-
-- **短期记忆**：当前会话完整上下文
-- **长期记忆**：用户偏好、常去地质区域、历史经验
-- **语义记忆**：从对话中自动提取的地质事实
-
-改造集中在 `SessionService` 的 `prepare_history`（注入长期记忆到 context）和 `save_history`（自动提取事实）两个方法。
+- **记忆系统改造（mem0）**：已实现三层记忆架构（短期/长期/事实记忆），`backend/app/services/memory/`
+- **知识库检索优化**：多路召回 RRF 融合、Re-ranker 精排、动态阈值截断、图片多模态处理
+- **JWT 认证**：已实现 auth_router.py 登录注册
+- **测试框架**：知识库服务已建立 pytest 测试套件 `backend/knowledge/tests/`
+- **自动驾驶评估 Agent**：`backend/autopilot/` 独立服务
 
 ### P0：容器化部署
 
 规划 `Dockerfile` + `docker-compose.yml`，包含前端、双后端服务、Redis（用于 LangGraph 状态持久化和短期记忆缓存）。
-
-### P0：安全加固
-
-- JWT 认证替代前端硬编码密码
-- API 错误信息脱敏
-- Rate Limiting 限制请求频率
 
 ### P1：系统韧性
 
 - 细粒度重试（tenacity 指数退避）替代粗粒度全链路重试
 - 熔断器（pybreaker）防止下游服务挂掉时的级联失败
 - 整体超时控制（asyncio.wait_for）
+- `/health` 健康检查端点
 
 ### P1：性能优化
 
@@ -213,10 +220,12 @@ npm run dev
 ### P1：可观测性
 
 - 结构化日志（JSON 格式）
-- `/health` 健康检查端点
 - 请求指标采集（延迟、token 消耗、工具调用频率）
 
-### P2：测试与代码质量
+### P2：代码质量
+
+- 工具定义统一化（当前 OpenAI Agents SDK 和 LangGraph 各定义一遍）
+- 主智能体服务测试框架建立
 
 - 建立 pytest 测试框架，覆盖核心服务层
 - 工具定义统一化（当前 OpenAI Agents SDK 和 LangGraph 各定义一遍）

@@ -1,4 +1,5 @@
 import os.path
+import re
 from wsgiref.validate import validator
 
 from repositories.vector_store_repository import VectorStoreRepository
@@ -6,6 +7,8 @@ from langchain_community.document_loaders import TextLoader
 from langchain_text_splitters import  RecursiveCharacterTextSplitter
 from langchain_community.vectorstores.utils import filter_complex_metadata
 from  utils.markdown_utils import MarkDownUtils
+from services.image_description_service import ImageDescriptionService
+from config.settings import settings
 import  logging
 logging.basicConfig(level=logging.INFO)
 logger=logging.getLogger(__name__)
@@ -30,6 +33,12 @@ class IngestionProcessor:
                 ""
             ]
         )
+        if settings.ENABLE_IMAGE_DESCRIPTION:
+            self.image_description_service = ImageDescriptionService()
+            logger.info("[图片多模态] 图片描述功能已启用")
+        else:
+            self.image_description_service = None
+            logger.info("[图片多模态] 图片描述功能已关闭")
 
     def ingest_file(self, md_path: str) -> int:
         """
@@ -88,21 +97,37 @@ class IngestionProcessor:
                 final_document_chunks.extend(documents_chunks_list)
 
 
-        #  3.切分后文档块的元数据校验(过滤不被向量数据库支持的元数据清除掉)
+        #  3. 图片描述生成（Phase 5：离线多模态处理）
+        if self.image_description_service:
+            logger.info("[图片多模态] 开始为文档块中的图片生成文字描述...")
+            image_count = 0
+            for doc in final_document_chunks:
+                pattern = r'!\[([^\]]*)\]\((https?://[^\s\)]+)\)'
+                if re.search(pattern, doc.page_content):
+                    old_content = doc.page_content
+                    doc.page_content = self.image_description_service.describe_chunk_images(doc.page_content)
+                    if doc.page_content != old_content:
+                        image_count += 1
+            if image_count > 0:
+                logger.info(f"[图片多模态] 共处理 {image_count} 个包含图片的文档块")
+            else:
+                logger.info("[图片多模态] 当前文档无图片，跳过描述生成")
+
+        #  4.切分后文档块的元数据校验(过滤不被向量数据库支持的元数据清除掉)
         clean_documents_chunks=filter_complex_metadata(final_document_chunks)
 
-        #  4. 无效性检查（校验page_content的是否合法（不能为空））
+        #  5. 无效性检查（校验page_content的是否合法（不能为空））
         valid_documents_chunks=[document for document in  clean_documents_chunks if document.page_content.strip()]
 
         if not valid_documents_chunks:
             logger.error("切分后的文档块没有任何的内容")
             return 0
 
-        # 5 .存储文档块到向量数据库
+        # 6 .存储文档块到向量数据库
         total_documents_chunks=self.vector_store.add_documents(valid_documents_chunks)
 
 
-        # 6 .返回保存成功的文档块数
+        # 7 .返回保存成功的文档块数
         return total_documents_chunks
 
 

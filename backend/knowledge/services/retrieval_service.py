@@ -12,6 +12,8 @@ from .ingestion.ingestion_processor import IngestionProcessor
 from utils.markdown_utils import MarkDownUtils
 from config.settings import settings
 from sklearn.metrics.pairwise import cosine_similarity
+from .reranker_service import RerankerService
+from .pure_retrieval_utils import deduplicate_results, rrf_fusion, dynamic_cutoff
 
 
 class RetrievalService:
@@ -23,6 +25,7 @@ class RetrievalService:
     def __init__(self):
         self.chroma_vector = VectorStoreRepository()
         self.spliter = IngestionProcessor()
+        self.reranker = RerankerService()
 
     def rough_ranking(self, user_query, mds_metadata: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
@@ -130,6 +133,7 @@ class RetrievalService:
     def retrieval(self, user_question: str) -> List[Document]:
         """
          核心检索方法（检索器的入口）
+         Phase 3 改造：双路召回 → RRF 融合 → 去重 → Re-ranker 精排 → Top-N 截断
         Args:
             user_question: 用户输入的问题
 
@@ -137,42 +141,69 @@ class RetrievalService:
            List[Document]: 返回指定Top-N个相似性文档列表
         """
 
-        # 性能优先快路径：先只走向量检索，避免多路重排导致在线查询超时
-        # 若后续需要更高精度，可在离线评估后再逐步恢复标题路检索与二次重排。
-        based_vector_candidates = self._search_based_vector(user_question)
-        return based_vector_candidates[: settings.TOP_FINAL]
+        # 第一路：向量语义检索（召回 Top30）
+        vector_results = self._search_based_vector(user_question, top_k=settings.TOP_RECALL)
 
-    def _search_based_vector(self, user_question: str) -> List[Document]:
+        # 第二路：标题关键词检索（召回 Top30）
+        keyword_results = self._search_based_title(user_question)
+
+        # RRF 融合两路召回
+        fused_results = rrf_fusion(vector_results, keyword_results)
+
+        # 去重（Phase 1：防止同一段内容重复返回）
+        deduplicated = deduplicate_results([d for d, _ in fused_results])
+
+        # Phase 3: Re-ranker 精排（取 Top_RERANK 篇送入重排）
+        reranker_candidates = deduplicated[: settings.TOP_RERANK]
+        reranked = self.reranker.rerank(user_question, reranker_candidates, top_n=settings.TOP_FINAL)
+
+        # 将 Re-ranker 分数写入 metadata，供后续 Phase 4 动态阈值使用
+        for doc, score in reranked:
+            doc.metadata["rerank_score"] = score
+
+        # Phase 4: 动态阈值截断（基于 Re-ranker 分数）
+        result_docs = dynamic_cutoff(
+            reranked,
+            threshold=settings.RERANK_THRESHOLD,
+            min_return=settings.MIN_RETURN,
+            max_return=settings.MAX_RETURN,
+        )
+
+        # 如果截断后文档数过少，记录日志
+        if len(result_docs) < settings.MIN_RETURN:
+            logger.warning(f"[动态阈值] 截断后文档数({len(result_docs)})低于保底值({settings.MIN_RETURN})，返回全部")
+            result_docs = [doc for doc, _ in reranked[:settings.MIN_RETURN]]
+
+        return result_docs
+
+    def _search_based_vector(self, user_question: str, top_k: int = None) -> List[tuple[Document, float]]:
         """
-        第一路检索
-        基于语义相似度检索
+        第一路检索：基于语义相似度检索
+        改造：返回带分数的元组列表（Phase 2：为 RRF 融合提供分数）
 
         Args:
             user_question: 用户输入的问题
+            top_k: 召回数量，默认使用 settings.TOP_RECALL
 
         Returns:
-            List[Document]： Top-N个相似的文档列表
-
+            List[tuple[Document, float]]：(文档, Chroma L2 距离分数) 列表
         """
-        # 1.返回带分数的文档列表
-        documents_with_score = self.chroma_vector.search_similarity_with_score(user_question)
+        if top_k is None:
+            top_k = settings.TOP_RECALL
 
-        # 2.TODO(不用距离得分)
-        based_vector_candidates = []
-        for document, _ in documents_with_score:
-            based_vector_candidates.append(document)
-        return based_vector_candidates
+        documents_with_score = self.chroma_vector.search_similarity_with_score(user_question, top_k=top_k)
+        return documents_with_score
 
-    def _search_based_title(self, user_query: str) -> List[Document]:
+    def _search_based_title(self, user_query: str) -> List[tuple[Document, float]]:
         """
-         第二路检索
-         基于标题的关键词匹配检索
+         第二路检索：基于标题的关键词匹配检索
+         改造：返回 (Document, final_score) 元组列表（Phase 2：为 RRF 融合提供分数）
+
         Args:
             user_query: 用户输入的问题
 
         Returns:
-            List[Document]: Top-N个相似的文档列表
-
+            List[tuple[Document, float]]: (文档, fine_ranking 最终分数) 列表
         """
 
         # 1. 获取指定目录下的文件的标题
@@ -185,8 +216,7 @@ class RetrievalService:
         fine_mds_metadata = self.fine_ranking(user_query, rough_mds_metadata)
 
         # 3. 处理文档（根据标题读取标题对于的文档内容---Document(page_content,metadata={})）
-
-        based_title_candidates = []
+        based_title_candidates: List[tuple[Document, float]] = []
         for fine_md_metadata in fine_mds_metadata:
             try:
                 # 3.1 打开文件
@@ -200,16 +230,17 @@ class RetrievalService:
                         "path": fine_md_metadata['path'],
                         "title": fine_md_metadata['title'],
                     })
-                    based_title_candidates.append(doc)
+                    final_score = fine_md_metadata.get('final_score', 0.0)
+                    based_title_candidates.append((doc, final_score))
                 # b. 长md知识 切分
                 else:
                     doc_chunks = self._deal_long_title_content(content, fine_md_metadata, user_query)
-                    based_title_candidates.extend(doc_chunks)  # doc_chunks 列表中元素打散了
+                    for chunk in doc_chunks:
+                        chunk_score = chunk.metadata.get('similarity', 0.0)
+                        based_title_candidates.append((chunk, chunk_score))
             except Exception as e:
-
                 logger.error(f"打开文件失败:{e}")
                 return []
-        # 4. 返回指定文档列表
 
         return based_title_candidates
 

@@ -24,7 +24,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 
 from .state import GraphState
 from .routing import build_planner_chain
-from .agents import get_technical_agent, get_service_agent
+from .agents import get_technical_agent, get_service_agent, get_autopilot_agent
 from infrastructure.logging.logger import logger
 from infrastructure.tools.mcp.mcp_servers import search_mcp_client, baidu_mcp_client
 from utils.text_util import format_tool_call_html, format_agent_update_html
@@ -101,7 +101,12 @@ async def dispatcher_node(state: GraphState) -> dict:
 
     current = pending.pop(0)
 
-    display_name = "地质知识专家" if current["type"] == "technical" else "野外后勤导航专家"
+    display_names = {
+        "technical": "地质知识专家",
+        "service": "野外后勤导航专家",
+        "autopilot": "自动驾驶评估专家",
+    }
+    display_name = display_names.get(current["type"], current["type"])
 
     return {
         "current_task": current,
@@ -239,6 +244,57 @@ async def service_node(state: GraphState) -> dict:
     }
 
 
+async def autopilot_node(state: GraphState) -> dict:
+    """
+    自动驾驶评估专家节点：使用 ReAct agent 处理自动驾驶数据分析任务。
+    通过 asyncio.Queue 实时推送流式 token 到外层。
+    """
+    current_task = state.get("current_task", {})
+    query = current_task.get("query", state.get("user_query", ""))
+    agent = get_autopilot_agent()
+
+    try:
+        final_text = ""
+        actual_tool_calls = []
+
+        async for event in agent.astream_events(
+            {"messages": [HumanMessage(content=query)]},
+            version="v2"
+        ):
+            kind = event.get("event")
+
+            if kind == "on_tool_start":
+                tool_name = event.get("name", "")
+                if tool_name and tool_name not in actual_tool_calls:
+                    actual_tool_calls.append(tool_name)
+                    await _emit_sse(format_tool_call_html(tool_name), ContentKind.PROCESS)
+
+            elif kind == "on_chat_model_stream":
+                chunk = event.get("data", {}).get("chunk")
+                if chunk and hasattr(chunk, "content") and chunk.content:
+                    content = chunk.content
+                    if isinstance(content, str) and content:
+                        final_text += content
+                        await _emit_sse(content, ContentKind.ANSWER)
+
+        if not final_text.strip():
+            final_text = "自动驾驶评估专家未返回有效回答"
+
+    except Exception as e:
+        logger.error(f"[LangGraph Autopilot] 执行失败: {e}", exc_info=True)
+        final_text = f"自动驾驶评估专家执行失败: {str(e)}"
+        actual_tool_calls = []
+
+    tool_logs = [format_tool_call_html(name) for name in actual_tool_calls]
+
+    return {
+        "final_output": final_text,
+        "completed_tasks": [f"autopilot: {query[:30]}"],
+        "process_logs": tool_logs,
+        "tool_calls": actual_tool_calls,
+    }
+
+
 # ============================================================================
 # 条件边
 # ============================================================================
@@ -254,6 +310,8 @@ def route_to_expert(state: GraphState) -> str:
         return END  # 无任务 → 直接结束
     if current.get("type") == "technical":
         return "technical"
+    if current.get("type") == "autopilot":
+        return "autopilot"
     return "service"
 
 
@@ -289,6 +347,7 @@ def build_langgraph_app():
     graph.add_node("dispatcher", dispatcher_node)
     graph.add_node("technical", technical_node)
     graph.add_node("service", service_node)
+    graph.add_node("autopilot", autopilot_node)
 
     graph.set_entry_point("orchestrator")
     graph.add_edge("orchestrator", "dispatcher")
@@ -296,6 +355,7 @@ def build_langgraph_app():
     graph.add_conditional_edges("dispatcher", route_to_expert, {
         "technical": "technical",
         "service": "service",
+        "autopilot": "autopilot",
     })
 
     graph.add_conditional_edges("technical", check_complete, {
@@ -303,6 +363,10 @@ def build_langgraph_app():
         "done": END,
     })
     graph.add_conditional_edges("service", check_complete, {
+        "continue": "dispatcher",
+        "done": END,
+    })
+    graph.add_conditional_edges("autopilot", check_complete, {
         "continue": "dispatcher",
         "done": END,
     })
@@ -420,6 +484,14 @@ async def run_langgraph_stream(
                                 await stream_queue.put(
                                     "data: " + ResponseFactory.build_text(
                                         "✅ [野外后勤导航专家] 任务完成", ContentKind.PROCESS
+                                    ).model_dump_json() + "\n\n"
+                                )
+
+                            # Autopilot 节点完成
+                            elif node_name == "autopilot":
+                                await stream_queue.put(
+                                    "data: " + ResponseFactory.build_text(
+                                        "✅ [自动驾驶评估专家] 任务完成", ContentKind.PROCESS
                                     ).model_dump_json() + "\n\n"
                                 )
 

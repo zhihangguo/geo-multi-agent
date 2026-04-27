@@ -3,6 +3,7 @@ from agents.run import RunConfig
 
 from multi_agent.technical_agent import technical_agent
 from multi_agent.service_agent import comprehensive_service_agent
+from multi_agent_autopilot.agent import autopilot_agent
 from infrastructure.logging.logger import logger
 
 
@@ -70,10 +71,46 @@ async def query_service_station_and_navigate(
         return f"业务专家暂时无法回答: {str(e)}"
 
 
-# 3. 将两个工具暴露出去
+# 3. 定义自动驾驶评估专家工具
+@function_tool
+async def consult_autopilot_expert(
+        query: str,
+        tenant_id: str = "tenant_a",
+) -> str:
+    """
+    【自动驾驶评估专家】处理自动驾驶数据分析、评估报告、安全统计等需求。
+    当用户询问：
+    1. 测试数据查询："查询 AV-001 的所有测试记录"、"雨天场景的感知指标"
+    2. 安全事件统计："统计各严重级别的安全事件数量"
+    3. 日志分析："分析 RUN-001 的系统日志"
+    4. 评估报告："生成 RUN-001 的评估报告"
+    5. 语义搜索："找出感知表现最差的几次测试"
+    请调用此工具。
+
+    Args:
+        query: 用户的原始问题或完整指令。
+    """
+    try:
+        logger.info(f"[Route] 转交自动驾驶评估专家: {query[:30]}...")
+        result = await Runner.run(
+            autopilot_agent,
+            input=query,
+            run_config=RunConfig(tracing_disabled=True)
+        )
+        output = result.final_output
+        if output is None:
+            return "自动驾驶评估专家已执行，但未返回可展示文本。"
+        return str(output).strip() or "自动驾驶评估专家已执行，但返回内容为空。"
+    except Exception as e:
+        logger.error(f"自动驾驶评估专家执行异常: {e}")
+        return f"自动驾驶评估专家暂时无法回答: {str(e)}"
+
+
+# 4. 将三个工具暴露出去
 AGENT_TOOLS = [
     consult_technical_expert,
-    query_service_station_and_navigate
+    query_service_station_and_navigate,
+    consult_autopilot_expert,
 ]
 
 
